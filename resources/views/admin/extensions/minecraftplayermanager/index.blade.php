@@ -3,7 +3,7 @@
     // Define extension information.
     $EXTENSION_ID = "minecraftplayermanager";
     $EXTENSION_NAME = stripslashes("Minecraft Player Manager");
-    $EXTENSION_VERSION = "1.3.0";
+    $EXTENSION_VERSION = "1.4.2";
     $EXTENSION_DESCRIPTION = stripslashes("Manage Minecraft Java Players from your Panel Interface.");
     $EXTENSION_ICON = "/assets/extensions/minecraftplayermanager/icon.jpg";
     $EXTENSION_WEBSITE = "[website]";
@@ -42,19 +42,19 @@
     $providers = array_values($data['providers']);
   }
 
-  $nonceIdentifier = 'f029ba5a5f6f808a5c78d1f274fa6053';
+  $nonceIdentifier = '157c596bbaff828db2827eef1a2882c2';
   $nonceIdentifierWithoutReplacement = '%%__NONCE' . '__%%';
 ?>
 
 <div class="row">
   <div class="col-lg-3 col-md-3 col-sm-12 col-xs-12">
-    <div class="box {{ $version !== 'Unknown' ? $version !== "1.3.0" ? 'box-danger' : 'box-primary' : 'box-primary' }}">
+    <div class="box {{ $version !== 'Unknown' ? $version !== "1.4.2" ? 'box-danger' : 'box-primary' : 'box-primary' }}">
       <div class="box-header with-border">
         <h3 class="box-title"><i class='bx bx-git-repo-forked' ></i> Information</h3>
       </div>
       <div class="box-body">
         <p>
-          Thank you for purchasing <b>Minecraft Player Manager</b>! You are currently using version <code>1.3.0</code> (latest version is <code>{{ $version }}</code>).
+          Thank you for purchasing <b>Minecraft Player Manager</b>! You are currently using version <code>1.4.2</code> (latest version is <code>{{ $version }}</code>).
           If you have any questions or need help, please visit our <a href="https://rjansen.dev/discord" target="_blank">Discord</a>.
           <b>{{ $nonceIdentifier === $nonceIdentifierWithoutReplacement ? "This is an indev version of the product!" : "" }}</b>
         </p>
