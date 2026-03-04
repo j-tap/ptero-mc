@@ -42,6 +42,8 @@ export interface Server {
   };
   isTransferring: boolean;
   variables: ServerEggVariable[];
+  nestId: number;
+  eggId: number;
   allocations: Allocation[];
 
   // Define egg id from Blueprint
@@ -75,6 +77,8 @@ export const rawDataToServerObject = ({ attributes: data }: FractalResponseData)
   allocations: ((data.relationships?.allocations as FractalResponseList | undefined)?.data || []).map(
     rawDataToServerAllocation,
   ),
+  nestId: data.nest_id,
+  eggId: data.egg_id,
 
   // Get egg id from Blueprint
   BlueprintFramework: {

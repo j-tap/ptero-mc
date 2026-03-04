@@ -149,6 +149,11 @@ Route::group([
         Route::put('/docker-image', [Client\Servers\SettingsController::class, 'dockerImage']);
     });
 
+    Route::group(['prefix' => '/properties', 'middleware' => \Pterodactyl\Http\Middleware\Api\Client\Server\IsMinecraft::class], function () {
+        Route::get('/', [Client\Servers\ServerPropertiesController::class, 'index']);
+        Route::post('/save', [Client\Servers\ServerPropertiesController::class, 'save']);
+    });
+
     Route::group(['prefix' => '/plugin-manager'], function () {
         Route::get('/', [Client\PluginManagerController::class, 'index']);
         Route::get('/installed', [Client\PluginManagerController::class, 'installed']);

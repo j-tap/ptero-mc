@@ -13,6 +13,7 @@ import AccountApiContainer from '@/components/dashboard/AccountApiContainer';
 import AccountSSHContainer from '@/components/dashboard/ssh/AccountSSHContainer';
 import ActivityLogContainer from '@/components/dashboard/activity/ActivityLogContainer';
 import ServerActivityLogContainer from '@/components/server/ServerActivityLogContainer';
+import PropertiesContainer from '@/components/server/properties/PropertiesContainer';
 
 // Each of the router files is already code split out appropriately — so
 // all of the items above will only be loaded in when that router is loaded.
@@ -32,6 +33,10 @@ interface RouteDefinition {
 }
 
 interface ServerRouteDefinition extends RouteDefinition {
+    nestId?: number;
+    eggId?: number;
+    nestIds?: number[];
+    eggIds?: number[];
     permission: string | string[] | null;
 }
 
@@ -91,6 +96,13 @@ export default {
             permission: null,
             name: 'Plugins',
             component: lazy(() => import('@/components/server/plugin_manager/PluginManagerContainer')),
+        },
+        {
+            path: '/properties',
+            permission: 'properties.*',
+            name: 'Properties',
+            nestIds: [1],
+            component: PropertiesContainer,
         },
         {
             path: '/databases',

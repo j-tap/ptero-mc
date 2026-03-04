@@ -71,6 +71,8 @@ class ServerTransformer extends BaseClientTransformer
             'is_suspended' => $server->isSuspended(),
             // This field is deprecated, please use "status".
             'is_installing' => !$server->isInstalled(),
+            'nest_id' => $server->nest_id,
+            'egg_id' => $server->egg_id,
             'is_transferring' => !is_null($server->transfer),
 
             // Blueprint-related fields.
