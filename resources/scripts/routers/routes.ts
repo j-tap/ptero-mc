@@ -87,6 +87,12 @@ export default {
             component: FileEditContainer,
         },
         {
+            path: '/plugins',
+            permission: null,
+            name: 'Plugins',
+            component: lazy(() => import('@/components/server/plugin_manager/PluginManagerContainer')),
+        },
+        {
             path: '/databases',
             permission: 'database.*',
             name: 'Databases',

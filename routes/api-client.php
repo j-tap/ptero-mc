@@ -148,4 +148,11 @@ Route::group([
         Route::post('/reinstall', [Client\Servers\SettingsController::class, 'reinstall']);
         Route::put('/docker-image', [Client\Servers\SettingsController::class, 'dockerImage']);
     });
+
+    Route::group(['prefix' => '/plugin-manager'], function () {
+        Route::get('/', [Client\PluginManagerController::class, 'index']);
+        Route::get('/installed', [Client\PluginManagerController::class, 'installed']);
+        Route::post('/install/{pluginId}', [Client\PluginManagerController::class, 'install']);
+        Route::delete('/{pluginId}', [Client\PluginManagerController::class, 'uninstall']);
+    });
 });
