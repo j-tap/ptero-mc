@@ -15,6 +15,9 @@ import { Dialog } from '@/components/elements/dialog';
 import { useFlashKey } from '@/plugins/useFlash';
 import Code from '@/components/elements/Code';
 
+import BeforeContent from '@blueprint/components/Account/API/BeforeContent';
+import AfterContent from '@blueprint/components/Account/API/AfterContent';
+
 export default () => {
     const [deleteIdentifier, setDeleteIdentifier] = useState('');
     const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -44,6 +47,7 @@ export default () => {
     return (
         <PageContentBlock title={'Account API'}>
             <FlashMessageRender byKey={'account'} />
+            <BeforeContent />
             <div css={tw`md:flex flex-nowrap my-10`}>
                 <ContentBox title={'Create API Key'} css={tw`flex-none w-full md:w-1/2`}>
                     <CreateApiKeyForm onKeyCreated={(key) => setKeys((s) => [...s!, key])} />
@@ -91,6 +95,7 @@ export default () => {
                     )}
                 </ContentBox>
             </div>
+        <AfterContent />
         </PageContentBlock>
     );
 };

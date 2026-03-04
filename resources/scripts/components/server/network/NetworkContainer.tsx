@@ -13,6 +13,9 @@ import getServerAllocations from '@/api/swr/getServerAllocations';
 import isEqual from 'react-fast-compare';
 import { useDeepCompareEffect } from '@/plugins/useDeepCompareEffect';
 
+import BeforeContent from '@blueprint/components/Server/Network/BeforeContent';
+import AfterContent from '@blueprint/components/Server/Network/AfterContent';
+
 const NetworkContainer = () => {
     const [loading, setLoading] = useState(false);
     const uuid = ServerContext.useStoreState((state) => state.server.data!.uuid);
@@ -56,6 +59,7 @@ const NetworkContainer = () => {
                 <Spinner size={'large'} centered />
             ) : (
                 <>
+                    <BeforeContent />
                     {data.map((allocation) => (
                         <AllocationRow key={`${allocation.ip}:${allocation.port}`} allocation={allocation} />
                     ))}
@@ -75,6 +79,7 @@ const NetworkContainer = () => {
                             </div>
                         </Can>
                     )}
+                    <AfterContent />
                 </>
             )}
         </ServerContentBlock>

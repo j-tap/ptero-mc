@@ -14,6 +14,9 @@ import GreyRowBox from '@/components/elements/GreyRowBox';
 import { Button } from '@/components/elements/button/index';
 import ServerContentBlock from '@/components/elements/ServerContentBlock';
 
+import BeforeContent from '@blueprint/components/Server/Schedules/List/BeforeContent';
+import AfterContent from '@blueprint/components/Server/Schedules/List/AfterContent';
+
 export default () => {
     const match = useRouteMatch();
     const history = useHistory();
@@ -44,6 +47,7 @@ export default () => {
                 <Spinner size={'large'} centered />
             ) : (
                 <>
+                    <BeforeContent />
                     {schedules.length === 0 ? (
                         <p css={tw`text-sm text-center text-neutral-300`}>
                             There are no schedules configured for this server.
@@ -72,6 +76,7 @@ export default () => {
                             </Button>
                         </div>
                     </Can>
+                    <AfterContent />
                 </>
             )}
         </ServerContentBlock>

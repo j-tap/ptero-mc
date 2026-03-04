@@ -23,6 +23,8 @@ import { restoreServerBackup } from '@/api/server/backups';
 import http, { httpErrorToHuman } from '@/api/http';
 import { Dialog } from '@/components/elements/dialog';
 
+import DropdownItems from '@blueprint/components/Server/Backups/DropdownItems';
+
 interface Props {
     backup: ServerBackup;
 }
@@ -205,6 +207,7 @@ export default ({ backup }: Props) => {
                             </>
                         </Can>
                     </div>
+                    <DropdownItems />
                 </DropdownMenu>
             ) : (
                 <button

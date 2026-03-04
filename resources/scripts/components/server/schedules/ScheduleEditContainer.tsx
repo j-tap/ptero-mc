@@ -18,6 +18,9 @@ import { format } from 'date-fns';
 import ScheduleCronRow from '@/components/server/schedules/ScheduleCronRow';
 import RunScheduleButton from '@/components/server/schedules/RunScheduleButton';
 
+import BeforeEdit from '@blueprint/components/Server/Schedules/Edit/BeforeEdit';
+import AfterEdit from '@blueprint/components/Server/Schedules/Edit/AfterEdit';
+
 interface Params {
     id: string;
 }
@@ -84,6 +87,7 @@ export default () => {
                 <Spinner size={'large'} centered />
             ) : (
                 <>
+                    <BeforeEdit />
                     <ScheduleCronRow cron={schedule.cron} css={tw`sm:hidden bg-neutral-700 rounded mb-4 p-3`} />
                     <div css={tw`rounded shadow`}>
                         <div
@@ -166,6 +170,7 @@ export default () => {
                             </Can>
                         )}
                     </div>
+                    <AfterEdit />
                 </>
             )}
         </PageContentBlock>

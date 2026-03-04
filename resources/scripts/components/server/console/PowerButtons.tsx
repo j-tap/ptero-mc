@@ -5,6 +5,8 @@ import { ServerContext } from '@/state/server';
 import { PowerAction } from '@/components/server/console/ServerConsoleContainer';
 import { Dialog } from '@/components/elements/dialog';
 
+import AdditionalPowerButtons from '@blueprint/components/Server/Terminal/AdditionalPowerButtons';
+
 interface PowerButtonProps {
     className?: string;
 }
@@ -48,6 +50,7 @@ export default ({ className }: PowerButtonProps) => {
             >
                 Forcibly stopping a server can lead to data corruption.
             </Dialog.Confirm>
+            <AdditionalPowerButtons />
             <Can action={'control.start'}>
                 <Button
                     className={'flex-1'}

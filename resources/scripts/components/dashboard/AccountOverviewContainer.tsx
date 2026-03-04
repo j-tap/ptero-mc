@@ -10,6 +10,9 @@ import styled from 'styled-components/macro';
 import MessageBox from '@/components/MessageBox';
 import { useLocation } from 'react-router-dom';
 
+import BeforeContent from '@blueprint/components/Account/Overview/BeforeContent';
+import AfterContent from '@blueprint/components/Account/Overview/AfterContent';
+
 const Container = styled.div`
     ${tw`flex flex-wrap`};
 
@@ -37,6 +40,7 @@ export default () => {
                 </MessageBox>
             )}
 
+            <BeforeContent />
             <Container css={[tw`lg:grid lg:grid-cols-3 mb-10`, state?.twoFactorRedirect ? tw`mt-4` : tw`mt-10`]}>
                 <ContentBox title={'Update Password'} showFlashes={'account:password'}>
                     <UpdatePasswordForm />
@@ -48,6 +52,7 @@ export default () => {
                     <ConfigureTwoFactorForm />
                 </ContentBox>
             </Container>
+            <AfterContent />
         </PageContentBlock>
     );
 };

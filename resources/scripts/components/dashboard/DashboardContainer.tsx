@@ -14,6 +14,9 @@ import { PaginatedResult } from '@/api/http';
 import Pagination from '@/components/elements/Pagination';
 import { useLocation } from 'react-router-dom';
 
+import BeforeContent from '@blueprint/components/Dashboard/Serverlist/BeforeContent';
+import AfterContent from '@blueprint/components/Dashboard/Serverlist/AfterContent';
+
 export default () => {
     const { search } = useLocation();
     const defaultPage = Number(new URLSearchParams(search).get('page') || '1');
@@ -28,10 +31,6 @@ export default () => {
         ['/api/client/servers', showOnlyAdmin && rootAdmin, page],
         () => getServers({ page, type: showOnlyAdmin && rootAdmin ? 'admin' : undefined })
     );
-
-    useEffect(() => {
-        setPage(1);
-    }, [showOnlyAdmin]);
 
     useEffect(() => {
         if (!servers) return;
@@ -54,6 +53,7 @@ export default () => {
 
     return (
         <PageContentBlock title={'Dashboard'} showFlashKey={'dashboard'}>
+            <BeforeContent />
             {rootAdmin && (
                 <div css={tw`mb-2 flex justify-end items-center`}>
                     <p css={tw`uppercase text-xs text-neutral-400 mr-2`}>
@@ -85,6 +85,7 @@ export default () => {
                     }
                 </Pagination>
             )}
+            <AfterContent />
         </PageContentBlock>
     );
 };

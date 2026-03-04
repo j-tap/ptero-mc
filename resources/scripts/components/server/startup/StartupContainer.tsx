@@ -16,6 +16,9 @@ import setSelectedDockerImage from '@/api/server/setSelectedDockerImage';
 import InputSpinner from '@/components/elements/InputSpinner';
 import useFlash from '@/plugins/useFlash';
 
+import BeforeContent from '@blueprint/components/Server/Startup/BeforeContent';
+import AfterContent from '@blueprint/components/Server/Startup/AfterContent';
+
 const StartupContainer = () => {
     const [loading, setLoading] = useState(false);
     const { clearFlashes, clearAndAddHttpError } = useFlash();
@@ -84,6 +87,7 @@ const StartupContainer = () => {
         )
     ) : (
         <ServerContentBlock title={'Startup Settings'} showFlashKey={'startup:image'}>
+            <BeforeContent />
             <div css={tw`md:flex`}>
                 <TitledGreyBox title={'Startup Command'} css={tw`flex-1`}>
                     <div css={tw`px-1 py-2`}>
@@ -130,6 +134,7 @@ const StartupContainer = () => {
                     <VariableBox key={variable.envVariable} variable={variable} />
                 ))}
             </div>
+            <AfterContent />
         </ServerContentBlock>
     );
 };

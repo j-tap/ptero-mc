@@ -11,6 +11,9 @@ import { ServerContext } from '@/state/server';
 import ServerContentBlock from '@/components/elements/ServerContentBlock';
 import Pagination from '@/components/elements/Pagination';
 
+import BeforeContent from '@blueprint/components/Server/Backups/BeforeContent';
+import AfterContent from '@blueprint/components/Server/Backups/AfterContent';
+
 const BackupContainer = () => {
     const { page, setPage } = useContext(ServerBackupContext);
     const { clearFlashes, clearAndAddHttpError } = useFlash();
@@ -35,6 +38,7 @@ const BackupContainer = () => {
     return (
         <ServerContentBlock title={'Backups'}>
             <FlashMessageRender byKey={'backups'} css={tw`mb-4`} />
+            <BeforeContent />
             <Pagination data={backups} onPageSelect={setPage}>
                 {({ items }) =>
                     !items.length ? (
@@ -71,6 +75,7 @@ const BackupContainer = () => {
                     )}
                 </div>
             </Can>
+            <AfterContent />
         </ServerContentBlock>
     );
 };

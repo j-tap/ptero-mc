@@ -33,6 +33,8 @@ import isEqual from 'react-fast-compare';
 import ChmodFileModal from '@/components/server/files/ChmodFileModal';
 import { Dialog } from '@/components/elements/dialog';
 
+import DropdownItems from '@blueprint/components/Server/Files/Browse/DropdownItems';
+
 type ModalType = 'rename' | 'move' | 'chmod';
 
 const StyledRow = styled.div<{ $danger?: boolean }>`
@@ -189,6 +191,7 @@ const FileDropdownMenu = ({ file }: { file: FileObject }) => {
                 <Can action={'file.delete'}>
                     <Row onClick={() => setShowConfirmation(true)} icon={faTrashAlt} title={'Delete'} $danger />
                 </Can>
+                <DropdownItems />
             </DropdownMenu>
         </>
     );

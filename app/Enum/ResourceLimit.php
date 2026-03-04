@@ -37,7 +37,7 @@ enum ResourceLimit
      */
     public function middleware(): string
     {
-        return ThrottleRequests::using($this->throttleKey());
+        return 'throttle:' . $this->throttleKey();
     }
 
     public function limit(): Limit

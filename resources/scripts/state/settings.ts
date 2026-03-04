@@ -7,6 +7,9 @@ export interface SiteSettings {
         enabled: boolean;
         siteKey: string;
     };
+    blueprint: {
+        disable_attribution: boolean;
+    };
 }
 
 export interface SettingsStore {

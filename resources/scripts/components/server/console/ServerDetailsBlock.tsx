@@ -17,6 +17,9 @@ import useWebsocketEvent from '@/plugins/useWebsocketEvent';
 import classNames from 'classnames';
 import { capitalize } from '@/lib/strings';
 
+import BeforeInformation from '@blueprint/components/Server/Terminal/BeforeInformation';
+import AfterInformation from '@blueprint/components/Server/Terminal/AfterInformation';
+
 type Stats = Record<'memory' | 'cpu' | 'disk' | 'uptime' | 'rx' | 'tx', number>;
 
 const getBackgroundColor = (value: number, max: number | null): string | undefined => {
@@ -90,6 +93,7 @@ const ServerDetailsBlock = ({ className }: { className?: string }) => {
 
     return (
         <div className={classNames('grid grid-cols-6 gap-2 md:gap-4', className)}>
+            <BeforeInformation />
             <StatBlock icon={faWifi} title={'Address'} copyOnClick={allocation}>
                 {allocation}
             </StatBlock>
@@ -133,6 +137,7 @@ const ServerDetailsBlock = ({ className }: { className?: string }) => {
             <StatBlock icon={faCloudUploadAlt} title={'Network (Outbound)'}>
                 {status === 'offline' ? <span className={'text-gray-400'}>Offline</span> : bytesToString(stats.tx)}
             </StatBlock>
+            <AfterInformation />
         </div>
     );
 };

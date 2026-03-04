@@ -12,6 +12,9 @@ import Can from '@/components/elements/Can';
 import ServerContentBlock from '@/components/elements/ServerContentBlock';
 import tw from 'twin.macro';
 
+import BeforeContent from '@blueprint/components/Server/Users/BeforeContent';
+import AfterContent from '@blueprint/components/Server/Users/AfterContent';
+
 export default () => {
     const [loading, setLoading] = useState(true);
 
@@ -50,6 +53,7 @@ export default () => {
     return (
         <ServerContentBlock title={'Users'}>
             <FlashMessageRender byKey={'users'} css={tw`mb-4`} />
+            <BeforeContent />
             {!subusers.length ? (
                 <p css={tw`text-center text-sm text-neutral-300`}>It looks like you don&apos;t have any subusers.</p>
             ) : (
@@ -60,6 +64,7 @@ export default () => {
                     <AddSubuserButton />
                 </div>
             </Can>
+            <AfterContent />
         </ServerContentBlock>
     );
 };

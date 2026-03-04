@@ -21,6 +21,9 @@ import { encodePathSegments, hashToPath } from '@/helpers';
 import { dirname } from 'pathe';
 import CodemirrorEditor from '@/components/elements/CodemirrorEditor';
 
+import BeforeEdit from '@blueprint/components/Server/Files/Edit/BeforeEdit';
+import AfterEdit from '@blueprint/components/Server/Files/Edit/AfterEdit';
+
 export default () => {
     const [error, setError] = useState('');
     const { action } = useParams<{ action: 'new' | string }>();
@@ -91,6 +94,7 @@ export default () => {
                     <FileManagerBreadcrumbs withinFileEditor isNewFile={action !== 'edit'} />
                 </div>
             </ErrorBoundary>
+            <BeforeEdit />
             {hash.replace(/^#/, '').endsWith('.pteroignore') && (
                 <div css={tw`mb-4 p-4 border-l-4 bg-neutral-900 rounded border-cyan-400`}>
                     <p css={tw`text-neutral-300 text-sm`}>
@@ -153,6 +157,7 @@ export default () => {
                     </Can>
                 )}
             </div>
+            <AfterEdit />
         </PageContentBlock>
     );
 };

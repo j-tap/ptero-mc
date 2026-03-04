@@ -11,6 +11,12 @@ import Spinner from '@/components/elements/Spinner';
 import styled from 'styled-components/macro';
 import isEqual from 'react-fast-compare';
 
+import BeforeEntryName from '@blueprint/components/Dashboard/Serverlist/ServerRow/BeforeEntryName';
+import AfterEntryName from '@blueprint/components/Dashboard/Serverlist/ServerRow/AfterEntryName';
+import BeforeEntryDescription from '@blueprint/components/Dashboard/Serverlist/ServerRow/BeforeEntryDescription';
+import AfterEntryDescription from '@blueprint/components/Dashboard/Serverlist/ServerRow/AfterEntryDescription';
+import ResourceLimits from '@blueprint/components/Dashboard/Serverlist/ServerRow/ResourceLimits';
+
 // Determines if the current value is in an alarm threshold so we can show it in red rather
 // than the more faded default style.
 const isAlarmState = (current: number, limit: number): boolean => limit > 0 && current / (limit * 1024 * 1024) >= 0.9;
@@ -95,9 +101,15 @@ export default ({ server, className }: { server: Server; className?: string }) =
                     <FontAwesomeIcon icon={faServer} />
                 </div>
                 <div>
+                    <BeforeEntryName />
                     <p css={tw`text-lg break-words`}>{server.name}</p>
+                    <AfterEntryName />
                     {!!server.description && (
-                        <p css={tw`text-sm text-neutral-300 break-words line-clamp-2`}>{server.description}</p>
+                        <div>
+                            <BeforeEntryDescription />
+                            <p css={tw`text-sm text-neutral-300 break-words line-clamp-2`}>{server.description}</p>
+                            <AfterEntryDescription />
+                        </div>
                     )}
                 </div>
             </div>
@@ -167,6 +179,7 @@ export default ({ server, className }: { server: Server; className?: string }) =
                             </div>
                             <p css={tw`text-xs text-neutral-600 text-center mt-1`}>of {diskLimit}</p>
                         </div>
+                        <ResourceLimits />
                     </React.Fragment>
                 )}
             </div>

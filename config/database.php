@@ -50,7 +50,7 @@ return [
             'prefix_indexes' => true,
             'strict' => env('DB_STRICT_MODE', false), // TODO: true by default
             'engine' => null,
-            'timezone' => env('DB_TIMEZONE', Time::getMySQLTimezoneOffset(env('APP_TIMEZONE', 'UTC'))),
+            'timezone' => env('DB_TIMEZONE', '+00:00'),
             'sslmode' => env('DB_SSLMODE', 'prefer'),
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
@@ -75,7 +75,7 @@ return [
             'prefix_indexes' => true,
             'strict' => env('DB_STRICT_MODE', true),
             'engine' => null,
-            'timezone' => env('DB_TIMEZONE', Time::getMySQLTimezoneOffset(env('APP_TIMEZONE', 'UTC'))),
+            'timezone' => env('DB_TIMEZONE', '+00:00'),
             'sslmode' => env('DB_SSLMODE', 'prefer'),
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
@@ -97,10 +97,7 @@ return [
     |
     */
 
-    'migrations' => [
-        'table' => 'migrations',
-        'update_date_on_publish' => true,
-    ],
+    'migrations' => 'migrations',
 
     /*
     |--------------------------------------------------------------------------

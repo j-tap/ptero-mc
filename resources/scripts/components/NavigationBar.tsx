@@ -13,6 +13,10 @@ import SpinnerOverlay from '@/components/elements/SpinnerOverlay';
 import Tooltip from '@/components/elements/tooltip/Tooltip';
 import Avatar from '@/components/Avatar';
 
+import BeforeNavigation from '@blueprint/components/Navigation/NavigationBar/BeforeNavigation';
+import AdditionalItems from '@blueprint/components/Navigation/NavigationBar/AdditionalItems';
+import AfterNavigation from '@blueprint/components/Navigation/NavigationBar/AfterNavigation';
+
 const RightNavigation = styled.div`
     & > a,
     & > button,
@@ -46,7 +50,8 @@ export default () => {
     };
 
     return (
-        <div className={'w-full bg-neutral-900 shadow-md overflow-x-auto'}>
+        <div className={'w-full bg-neutral-900 shadow-md overflow-x-auto'} id={'NavigationBar'}>
+            <BeforeNavigation />
             <SpinnerOverlay visible={isLoggingOut} />
             <div className={'mx-auto w-full flex items-center h-[3.5rem] max-w-[1200px]'}>
                 <div id={'logo'} className={'flex-1'}>
@@ -62,31 +67,33 @@ export default () => {
                 <RightNavigation className={'flex h-full items-center justify-center'}>
                     <SearchContainer />
                     <Tooltip placement={'bottom'} content={'Dashboard'}>
-                        <NavLink to={'/'} exact>
+                        <NavLink to={'/'} exact id={'NavigationDashboard'}>
                             <FontAwesomeIcon icon={faLayerGroup} />
                         </NavLink>
                     </Tooltip>
                     {rootAdmin && (
                         <Tooltip placement={'bottom'} content={'Admin'}>
-                            <a href={'/admin'} rel={'noreferrer'}>
+                            <a href={'/admin'} rel={'noreferrer'} id={'NavigationAdmin'}>
                                 <FontAwesomeIcon icon={faCogs} />
                             </a>
                         </Tooltip>
                     )}
+                    <AdditionalItems />
                     <Tooltip placement={'bottom'} content={'Account Settings'}>
-                        <NavLink to={'/account'}>
+                        <NavLink to={'/account'} id={'NavigationAccount'}>
                             <span className={'flex items-center w-5 h-5'}>
                                 <Avatar.User />
                             </span>
                         </NavLink>
                     </Tooltip>
                     <Tooltip placement={'bottom'} content={'Sign Out'}>
-                        <button onClick={onTriggerLogout}>
+                        <button onClick={onTriggerLogout} id={'NavigationLogout'}>
                             <FontAwesomeIcon icon={faSignOutAlt} />
                         </button>
                     </Tooltip>
                 </RightNavigation>
             </div>
+            <AfterNavigation />
         </div>
     );
 };

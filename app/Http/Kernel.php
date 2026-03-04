@@ -14,7 +14,6 @@ use Pterodactyl\Http\Middleware\VerifyCsrfToken;
 use Pterodactyl\Http\Middleware\VerifyReCaptcha;
 use Illuminate\Routing\Middleware\ThrottleRequests;
 use Pterodactyl\Http\Middleware\LanguageMiddleware;
-use Pterodactyl\Http\Middleware\SetSecurityHeaders;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Pterodactyl\Http\Middleware\Activity\TrackAPIKey;
@@ -47,7 +46,6 @@ class Kernel extends HttpKernel
         ValidatePostSize::class,
         TrimStrings::class,
         ConvertEmptyStringsToNull::class,
-        SetSecurityHeaders::class,
     ];
 
     protected $middlewarePriority = [
@@ -58,6 +56,13 @@ class Kernel extends HttpKernel
      * The application's route middleware groups.
      */
     protected $middlewareGroups = [
+        /* Blueprint middleware */
+        'blueprint' => [EncryptCookies::class, AddQueuedCookiesToResponse::class, StartSession::class, ShareErrorsFromSession::class, VerifyCsrfToken::class, SubstituteBindings::class, LanguageMiddleware::class,],
+        'blueprint/api' => [EnsureStatefulRequests::class, 'auth:sanctum', IsValidJson::class, TrackAPIKey::class, RequireTwoFactorAuthentication::class, AuthenticateIPAccess::class,],
+        'blueprint/application-api' => [SubstituteBindings::class, AuthenticateApplicationUser::class,],
+        'blueprint/client-api' => [SubstituteClientBindings::class, RequireClientApiKey::class,],
+
+        /* Pterodactyl middleware */
         'web' => [
             EncryptCookies::class,
             AddQueuedCookiesToResponse::class,
