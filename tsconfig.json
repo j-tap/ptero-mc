@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "es2015",
     "module": "es2020",
-    "jsx": "react-jsx",
+    "jsx": "react",
     "moduleResolution": "node",
     "lib": [
       "es2015",
@@ -27,6 +27,9 @@
       ],
       "@feature/*": [
         "./resources/scripts/components/server/features/*"
+      ],
+      "@blueprint/*": [
+        "./resources/scripts/blueprint/*"
       ]
     },
     "plugins": [
