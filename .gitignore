@@ -35,3 +35,11 @@ resources/lang/locales.js
 /public/build
 /public/hot
 result
+
+.blueprint/
+.build-cache.json
+framework/
+public/storage
+storage/extensions/
+storage/.extensions/
+*.blueprint
