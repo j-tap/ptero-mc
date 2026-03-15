@@ -7,6 +7,7 @@ import BackupContainer from '@/components/server/backups/BackupContainer';
 import NetworkContainer from '@/components/server/network/NetworkContainer';
 import StartupContainer from '@/components/server/startup/StartupContainer';
 import FileManagerContainer from '@/components/server/files/FileManagerContainer';
+import DocsContainer from '@/components/server/docs/DocsContainer';
 import SettingsContainer from '@/components/server/settings/SettingsContainer';
 import AccountOverviewContainer from '@/components/dashboard/AccountOverviewContainer';
 import AccountApiContainer from '@/components/dashboard/AccountApiContainer';
@@ -90,6 +91,13 @@ export default {
             permission: 'file.*',
             name: undefined,
             component: FileEditContainer,
+        },
+        {
+            path: '/docs',
+            permission: 'file.*',
+            name: 'Documentation',
+            component: DocsContainer,
+            exact: true,
         },
         {
             path: '/plugins',

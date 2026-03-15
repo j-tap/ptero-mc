@@ -95,6 +95,12 @@ Route::group([
         Route::get('/upload', Client\Servers\FileUploadController::class);
     });
 
+    Route::group(['prefix' => '/docs'], function () {
+        Route::get('/list', [Client\Servers\ServerDocsController::class, 'list']);
+        Route::get('/contents', [Client\Servers\ServerDocsController::class, 'contents']);
+        Route::get('/search', [Client\Servers\ServerDocsController::class, 'search']);
+    });
+
     Route::group(['prefix' => '/schedules'], function () {
         Route::get('/', [Client\Servers\ScheduleController::class, 'index']);
         Route::middleware([ResourceLimit::Schedule->middleware()])
