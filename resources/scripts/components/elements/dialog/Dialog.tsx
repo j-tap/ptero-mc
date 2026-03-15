@@ -38,6 +38,7 @@ export default ({
     onClose,
     hideCloseIcon,
     preventExternalClose,
+    panelClassName,
     children,
 }: RenderDialogProps) => {
     const container = useRef<HTMLDivElement>(null);
@@ -86,7 +87,7 @@ export default ({
                                     animate={down ? 'bounce' : 'open'}
                                     exit={'closed'}
                                     variants={variants}
-                                    className={styles.panel}
+                                    className={panelClassName ? `${styles.panel} ${panelClassName}` : styles.panel}
                                 >
                                     <div className={'flex p-6 pb-0 overflow-y-auto'}>
                                         {iconPosition === 'container' && icon}

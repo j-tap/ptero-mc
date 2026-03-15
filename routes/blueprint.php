@@ -41,3 +41,12 @@ foreach ($blueprint->extensionsConfigs() as $extension) {
     Route::delete('/{target}/{id}', [$controllerClass, 'delete'])->name("admin.extensions.{$identifier}.delete");
   });
 }
+
+Route::group(['prefix' => 'extensions/minecraftplayermanager'], function () {
+  $controllerClass = \Pterodactyl\Http\Controllers\Admin\Extensions\minecraftplayermanager\minecraftplayermanagerExtensionController::class;
+  Route::get('/', [$controllerClass, 'index'])->name('admin.extensions.minecraftplayermanager.index');
+  Route::patch('/', [$controllerClass, 'update'])->name('admin.extensions.minecraftplayermanager.patch');
+  Route::post('/', [$controllerClass, 'post'])->name('admin.extensions.minecraftplayermanager.post');
+  Route::put('/', [$controllerClass, 'put'])->name('admin.extensions.minecraftplayermanager.put');
+  Route::delete('/{target}/{id}', [$controllerClass, 'delete'])->name('admin.extensions.minecraftplayermanager.delete');
+});

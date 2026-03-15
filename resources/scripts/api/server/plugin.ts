@@ -37,6 +37,10 @@ export async function uninstallPlugin(uuid: string, pluginId: number): Promise<v
     await http.delete(`/api/client/servers/${uuid}/plugin-manager/uninstall/${pluginId}`);
 }
 
+export async function togglePluginDisabled(uuid: string, filename: string): Promise<void> {
+    await http.post(`/api/client/servers/${uuid}/plugin-manager/toggle-disable`, { filename });
+}
+
 export async function installedPlugin(uuid: string): Promise<InstalledPluginsParams[]> {
     const { data } = await http.get(`/api/client/servers/${uuid}/plugin-manager/installed`);
     return data.plugins;

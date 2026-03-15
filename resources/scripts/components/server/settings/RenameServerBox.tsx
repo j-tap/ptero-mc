@@ -26,7 +26,7 @@ const RenameServerBox = () => {
     return (
         <TitledGreyBox title={'Change Server Details'} css={tw`relative`}>
             <SpinnerOverlay visible={isSubmitting} />
-            <Form css={tw`mb-0`}>
+            <Form css={tw`mb-0`} autoComplete="off">
                 <Field id={'name'} name={'name'} label={'Server Name'} type={'text'} />
                 <div css={tw`mt-6`}>
                     <Label>Server Description</Label>

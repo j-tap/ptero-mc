@@ -38,4 +38,8 @@ Route::group([
 	Route::post('/clear', [minecraftplayermanager\PlayerManagerController::class, 'clear']);
 	Route::post('/wipe', [minecraftplayermanager\PlayerManagerController::class, 'wipe']);
 	Route::post('/kill', [minecraftplayermanager\PlayerManagerController::class, 'kill']);
+
+	Route::post('/gamemode', [minecraftplayermanager\PlayerManagerController::class, 'setGamemode']);
+	Route::post('/level', [minecraftplayermanager\PlayerManagerController::class, 'setLevel']);
+	Route::post('/position', [minecraftplayermanager\PlayerManagerController::class, 'setPosition']);
 });

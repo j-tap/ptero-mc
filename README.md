@@ -1,3 +1,17 @@
+## Minecraft-oriented fork
+
+This is a **fork of [Pterodactyl](https://github.com/pterodactyl/panel)** (with Blueprint) aimed at **Minecraft** server hosting. The panel is extended with features tailored for game servers.
+
+### New features (over vanilla Pterodactyl / Blueprint)
+
+- **File search** — full-text search by file contents in the server file manager.
+- **Plugin manager** — install plugins from Spigot marketplace, view installed plugins, enable/disable (`.jar.disabled`), open plugin config folders, search by name and description.
+- **Players** — manage Minecraft players (gamemode, level, teleport, etc.) from the panel (Minecraft Player Manager extension).
+- **Server documentation** — browse and view server-side docs (e.g. Markdown) in a dedicated section.
+- **Server properties** — edit `server.properties` and related configs from the panel for Minecraft eggs.
+
+---
+
 [![](https://github.com/user-attachments/assets/a1a6df48-7925-43c9-81d6-e2351e6c6bb8)](https://blueprint.zip/guides/admin/install)
 
 ## Introduction

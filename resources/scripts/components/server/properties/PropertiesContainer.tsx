@@ -130,6 +130,7 @@ export default () => {
                             </div>
                         </div>
                         <Formik
+                            key={`properties-${uuid}-${JSON.stringify(data.initial)}`}
                             onSubmit={onSave}
                             initialValues={data.initial}
                             innerRef={(ref: any) => (formikRef = ref)}

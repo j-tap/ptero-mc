@@ -28,12 +28,8 @@ export default ({ item }: Props) => {
                         name={item.key}
                         label={capitalize(item.key)}
                         description={'Toggle for true / false'}
-                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                        // @ts-ignore
-                        defaultChecked={values[item.key]}
+                        checked={!!values[item.key]}
                         onChange={() => {
-                            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                            // @ts-ignore
                             setFieldValue(item.key, !values[item.key]);
                         }}
                     />

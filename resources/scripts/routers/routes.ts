@@ -106,6 +106,12 @@ export default {
             component: lazy(() => import('@/components/server/plugin_manager/PluginManagerContainer')),
         },
         {
+            path: '/minecraft/players',
+            permission: 'control.console',
+            name: 'Players',
+            component: lazy(() => import('@blueprint/extensions/minecraftplayermanager/PlayerManagerContainer')),
+        },
+        {
             path: '/properties',
             permission: 'properties.*',
             name: 'Properties',

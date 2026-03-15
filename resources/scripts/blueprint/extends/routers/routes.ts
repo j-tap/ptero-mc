@@ -23,6 +23,6 @@ export default {
     /* routes/account *//* MinecraftplayermanagerAccountRouteStart *//* MinecraftplayermanagerAccountRouteEnd */
   ],
   server: [
-    /* routes/server *//* MinecraftplayermanagerServerRouteStart */{ path: '/minecraft/players', permission: 'control.console', name: 'Players', component: MinecraftplayermanagerGzbjrxeotv, adminOnly: false, identifier: 'minecraftplayermanager' },/* MinecraftplayermanagerServerRouteEnd */
+    /* routes/server *//* MinecraftplayermanagerServerRouteStart *//* MinecraftplayermanagerServerRouteEnd */
   ],
 } as Routes;

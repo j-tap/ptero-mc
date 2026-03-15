@@ -9,11 +9,14 @@ export interface MCPlugin {
 }
 
 export interface InstalledPluginsParams {
-    id: number;
-    server_uuid: string;
+    id?: number;
+    server_uuid?: string;
     plugin_id: number;
     plugin_name: string;
     filename: string;
-    created_at: Date;
-    updated_at: Date;
+    disabled?: boolean;
+    tag?: string;
+    config_folder?: string | null;
+    created_at?: Date;
+    updated_at?: Date;
 }

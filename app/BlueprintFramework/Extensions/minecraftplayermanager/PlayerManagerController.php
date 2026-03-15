@@ -17,11 +17,15 @@ use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Dependencie
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerBanIpRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Dependencies\Status\MinecraftQuery;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Dependencies\Rickselby\Nbt\Service;
+use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Dependencies\Rickselby\Nbt\Tag;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerPlayerRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerWhisperRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Dependencies\Rickselby\Nbt\DataHandler;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerPlayerNamedRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetWhitelistRequest;
+use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetGamemodeRequest;
+use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetLevelRequest;
+use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetPositionRequest;
 
 class PlayerManagerController extends ClientApiController
 {
@@ -1317,6 +1321,92 @@ class PlayerManagerController extends ClientApiController
         }
     }
 
+    private function getOnlinePlayerName(Server $server, string $uuid): ?string
+    {
+        $needle = str_replace('-', '', $this->utils->formatUuid($uuid));
+        try {
+            $data = $this->queryApi($server);
+            foreach ($data['players']['list'] ?? [] as $p) {
+                if (str_replace('-', '', (string) ($p['id'] ?? '')) === $needle) {
+                    return $p['name'] ?? null;
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+        return null;
+    }
+
+    public function setGamemode(PlayerManagerSetGamemodeRequest $request, Server $server): JsonResponse
+    {
+        if ($this->utils->isProxy($server)) {
+            return new JsonResponse(['success' => false, 'error' => 'Cannot set gamemode on a proxy server'], 400);
+        }
+        $uuid = $request->input('uuid');
+        $name = $this->getOnlinePlayerName($server, $uuid);
+        if (!$name) {
+            return new JsonResponse(['success' => false, 'error' => 'Player must be online'], 400);
+        }
+        $mode = $request->input('mode');
+        try {
+            $cmd = $this->utils->isBukkitBased($server)
+                ? "minecraft:gamemode $mode $name"
+                : "gamemode $mode $name";
+            $this->commandRepository->setServer($server)->send($cmd);
+            Activity::event('server:player.gamemode')->property(['name' => $name, 'mode' => $mode])->log();
+            return new JsonResponse(['success' => true]);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function setLevel(PlayerManagerSetLevelRequest $request, Server $server): JsonResponse
+    {
+        if ($this->utils->isProxy($server)) {
+            return new JsonResponse(['success' => false, 'error' => 'Cannot set level on a proxy server'], 400);
+        }
+        $uuid = $request->input('uuid');
+        $name = $this->getOnlinePlayerName($server, $uuid);
+        if (!$name) {
+            return new JsonResponse(['success' => false, 'error' => 'Player must be online'], 400);
+        }
+        $level = (int) $request->input('level');
+        try {
+            $cmd = $this->utils->isBukkitBased($server)
+                ? "minecraft:xp set $name $level levels"
+                : "xp set $name $level levels";
+            $this->commandRepository->setServer($server)->send($cmd);
+            Activity::event('server:player.level')->property(['name' => $name, 'level' => $level])->log();
+            return new JsonResponse(['success' => true]);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function setPosition(PlayerManagerSetPositionRequest $request, Server $server): JsonResponse
+    {
+        if ($this->utils->isProxy($server)) {
+            return new JsonResponse(['success' => false, 'error' => 'Cannot set position on a proxy server'], 400);
+        }
+        $uuid = $request->input('uuid');
+        $name = $this->getOnlinePlayerName($server, $uuid);
+        if (!$name) {
+            return new JsonResponse(['success' => false, 'error' => 'Player must be online'], 400);
+        }
+        $x = $request->input('x');
+        $y = $request->input('y');
+        $z = $request->input('z');
+        try {
+            $cmd = $this->utils->isBukkitBased($server)
+                ? "minecraft:tp $name $x $y $z"
+                : "tp $name $x $y $z";
+            $this->commandRepository->setServer($server)->send($cmd);
+            Activity::event('server:player.position')->property(['name' => $name])->log();
+            return new JsonResponse(['success' => true]);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
     public function stats(PlayerManagerGetRequest $request, Server $server, string $uuid): JsonResponse
     {
         if ($this->utils->isProxy($server)) {
@@ -1484,67 +1574,287 @@ class PlayerManagerController extends ClientApiController
             $nbt = new Service(new DataHandler());
             $tree = $nbt->readString(zlib_decode($playerData));
 
-            $inventory = [];
-            $inventoryNode = $tree->findChildByName('Inventory');
-            if ($inventoryNode && !$inventoryNode->isLeaf()) {
-                foreach ($inventoryNode->getChildren() as $itemNode) {
-                    $slot = null;
-                    $id = null;
-                    $count = 1;
-                    $displayName = null;
+            $debugInfo = [];
+            if (!$tree->isLeaf()) {
+                $rootNames = [];
+                $armorCandidates = [];
+                foreach ($tree->getChildren() as $ch) {
+                    $n = $ch->getName();
+                    $rootNames[] = $n === null ? '(null)' : (string) $n;
+                    if ($n !== null && stripos((string) $n, 'armor') !== false) {
+                        $armorCandidates[] = ['name' => (string) $n, 'type' => $ch->getType(), 'children_count' => $ch->isLeaf() ? 0 : count($ch->getChildren())];
+                    }
+                }
+                $debugInfo['root_tag_names'] = $rootNames;
+                $debugInfo['armor_list_candidates'] = $armorCandidates;
+            }
 
-                    $slotNode = $itemNode->findChildByName('Slot');
-                    if ($slotNode !== false) {
-                        $slot = $slotNode->getValue();
+            $inventory = [];
+            $parseItem = function ($itemNode, ?int $overrideSlot = null) {
+                $slot = $overrideSlot;
+                $id = null;
+                $count = 1;
+                $displayName = null;
+
+                $root = $itemNode;
+                $innerItem = $itemNode->findChildByName('item');
+                if ($innerItem !== false && !$innerItem->isLeaf()) {
+                    $root = $innerItem;
+                }
+
+                $slotNode = $root->findChildByName('Slot') ?: $root->findChildByName('slot');
+                if ($slotNode !== false && $slot === null) {
+                    $rawSlot = $slotNode->getValue();
+                    $slot = is_numeric($rawSlot) ? (int) $rawSlot : null;
+                    if ($slot !== null && $slot < 0) {
+                        $slot += 256;
                     }
-                    $idNode = $itemNode->findChildByName('id');
-                    if ($idNode !== false) {
-                        $id = $idNode->getValue();
+                    if ($slot === 150) {
+                        $slot = 40;
                     }
-                    $countNode = $itemNode->findChildByName('Count');
-                    if ($countNode !== false) {
-                        $count = $countNode->getValue();
-                    }
-                    $tag = $itemNode->findChildByName('tag');
-                    if ($tag !== false) {
-                        $display = $tag->findChildByName('display');
-                        if ($display !== false) {
-                            $nameNode = $display->findChildByName('Name');
-                            if ($nameNode !== false) {
-                                $raw = $nameNode->getValue();
-                                if (is_string($raw)) {
-                                    $decoded = json_decode($raw, true);
-                                    $displayName = is_array($decoded) && isset($decoded['text'])
-                                        ? $decoded['text']
-                                        : $raw;
-                                }
+                }
+
+                $idNode = $root->findChildByName('id') ?: $root->findChildByName('Id') ?: $root->findChildByName('ID');
+                if ($idNode !== false) {
+                    $id = $idNode->getValue();
+                }
+                if (($id === null || (string) $id === '') && !$root->isLeaf()) {
+                    foreach ($root->getChildren() as $child) {
+                        $name = $child->getName();
+                        if ($name === 'id' || $name === 'Id' || $name === 'ID') {
+                            $val = $child->getValue();
+                            if ($val !== null && (string) $val !== '') {
+                                $id = $val;
+                                break;
                             }
                         }
                     }
+                }
+                if (($id === null || (string) $id === '') && !$root->isLeaf()) {
+                    foreach ($root->getChildren() as $child) {
+                        $val = $child->getValue();
+                        if (is_string($val) && $val !== '' && (strpos($val, 'minecraft:') === 0 || preg_match('/^[a-z0-9_]+$/i', $val))) {
+                            $id = $val;
+                            break;
+                        }
+                    }
+                }
+                if (($id === null || (string) $id === '') && !$root->isLeaf()) {
+                    $components = $root->findChildByName('components');
+                    if ($components !== false && !$components->isLeaf()) {
+                        $typeNode = $components->findChildByName('minecraft:type');
+                        if ($typeNode !== false) {
+                            $typeVal = $typeNode->getValue();
+                            if (is_string($typeVal)) {
+                                $id = $typeVal;
+                            }
+                        }
+                    }
+                }
+                $countNode = $root->findChildByName('Count') ?: $root->findChildByName('count');
+                if ($countNode !== false) {
+                    $count = (int) $countNode->getValue();
+                }
+                if (!$root->isLeaf()) {
+                    foreach ($root->getChildren() as $child) {
+                        $name = $child->getName();
+                        if (($name === 'Count' || $name === 'count') && is_numeric($child->getValue())) {
+                            $count = (int) $child->getValue();
+                            break;
+                        }
+                    }
+                }
 
-                    if ($slot !== null && $id !== null) {
-                        $inventory[] = [
-                            'slot' => (int) $slot,
-                            'id' => (string) $id,
-                            'count' => (int) $count,
-                            'displayName' => $displayName,
-                        ];
+                $tag = $root->findChildByName('tag') ?: $root->findChildByName('Tag');
+                if ($tag !== false) {
+                    $display = $tag->findChildByName('display');
+                    if ($display !== false) {
+                        $nameNode = $display->findChildByName('Name');
+                        if ($nameNode !== false) {
+                            $raw = $nameNode->getValue();
+                            if (is_string($raw)) {
+                                $decoded = json_decode($raw, true);
+                                $displayName = is_array($decoded) && isset($decoded['text'])
+                                    ? $decoded['text']
+                                    : $raw;
+                            }
+                        }
+                    }
+                }
+
+                if ($slot !== null && $id !== null && (string) $id !== '' && $count > 0) {
+                    $idStr = (string) $id;
+                    if (strpos($idStr, ':') === false && is_numeric($idStr) === false) {
+                        $idStr = 'minecraft:' . $idStr;
+                    }
+                    $outSlot = (int) $slot;
+                    if ($outSlot === 150) {
+                        $outSlot = 40;
+                    }
+                    return [
+                        'slot' => $outSlot,
+                        'id' => $idStr,
+                        'count' => (int) $count,
+                        'displayName' => $displayName,
+                    ];
+                }
+                return null;
+            };
+
+            $armorSlotsOrder = [100, 101, 102, 103];
+            $armorAdded = false;
+
+            foreach (['ArmorItems', 'Armor', 'armor', 'equipment', 'Equipment'] as $armorListName) {
+                $armorNode = $tree->findChildByName($armorListName);
+                if ($armorNode && !$armorNode->isLeaf()) {
+                    $children = $armorNode->getChildren();
+                    $count = count($children);
+                    $indices = [];
+                    $slots = [];
+                    if ($count >= 4 && $count <= 6) {
+                        if ($count === 4) {
+                            $indices = [0, 1, 2, 3];
+                            $slots = [100, 101, 102, 103];
+                        } else {
+                            $indices = [1, 2, 3, 4, 5];
+                            $slots = [101, 103, 102, 100, 40];
+                        }
+                    }
+                    foreach ($indices as $idx => $i) {
+                        if (isset($children[$i], $slots[$idx])) {
+                            try {
+                                $entry = $parseItem($children[$i], $slots[$idx]);
+                                if ($entry !== null) {
+                                    $inventory[] = $entry;
+                                    $armorAdded = true;
+                                }
+                            } catch (\Throwable $e) {
+                                continue;
+                            }
+                        }
+                    }
+                    if ($armorAdded) {
+                        break;
+                    }
+                }
+            }
+            if (!$armorAdded && !$tree->isLeaf()) {
+                foreach ($tree->getChildren() as $child) {
+                    $name = $child->getName();
+                    if ($name !== null && (stripos((string) $name, 'armor') !== false || stripos((string) $name, 'equipment') !== false) && $child->getType() === Tag::TAG_LIST) {
+                        $listChildren = $child->getChildren();
+                        if (count($listChildren) >= 4) {
+                            for ($i = 0; $i < 4; $i++) {
+                                try {
+                                    $entry = $parseItem($listChildren[$i], $armorSlotsOrder[$i]);
+                                    if ($entry !== null) {
+                                        $inventory[] = $entry;
+                                        $armorAdded = true;
+                                    }
+                                } catch (\Throwable $e) {
+                                    continue;
+                                }
+                            }
+                            if ($armorAdded) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            $slotsFilled = array_flip(array_column($inventory, 'slot'));
+            $inventoryNode = $tree->findChildByName('Inventory') ?: $tree->findChildByName('inventory');
+            if ($inventoryNode && !$inventoryNode->isLeaf()) {
+                foreach ($inventoryNode->getChildren() as $itemNode) {
+                    try {
+                        $entry = $parseItem($itemNode);
+                        if ($entry !== null) {
+                            if (!isset($slotsFilled[$entry['slot']])) {
+                                $inventory[] = $entry;
+                                $slotsFilled[$entry['slot']] = true;
+                            } else {
+                                $idx = array_search($entry['slot'], array_column($inventory, 'slot'));
+                                if ($idx !== false) {
+                                    $inventory[$idx] = $entry;
+                                }
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        continue;
+                    }
+                }
+            }
+
+            if (!isset($slotsFilled[40])) {
+                foreach (['Offhand', 'offhand'] as $offhandTag) {
+                    $offhandNode = $tree->findChildByName($offhandTag);
+                    if ($offhandNode !== false && !$offhandNode->isLeaf()) {
+                        try {
+                            $entry = $parseItem($offhandNode, 40);
+                            if ($entry !== null) {
+                                $inventory[] = $entry;
+                                $slotsFilled[40] = true;
+                                break;
+                            }
+                        } catch (\Throwable $e) {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            $armorFromList = array_filter($inventory, fn ($e) => $e['slot'] >= 100 && $e['slot'] <= 103);
+            if (count($armorFromList) === 0) {
+                $armorSlotsReversed = [103, 102, 101, 100];
+                foreach (['equipment', 'Equipment', 'ArmorItems', 'Armor', 'armor'] as $armorListName) {
+                    $armorNode = $tree->findChildByName($armorListName);
+                    if ($armorNode && !$armorNode->isLeaf()) {
+                        $children = $armorNode->getChildren();
+                        $count = count($children);
+                        $indices = [];
+                        $slots = [];
+                        if ($count === 4) {
+                            $indices = [0, 1, 2, 3];
+                            $slots = [103, 102, 101, 100];
+                        } elseif ($count >= 6) {
+                            $indices = [1, 2, 3, 4, 5];
+                            $slots = [101, 103, 102, 100, 40];
+                        }
+                        foreach ($indices as $idx => $i) {
+                            if (isset($children[$i], $slots[$idx])) {
+                                try {
+                                    $entry = $parseItem($children[$i], $slots[$idx]);
+                                    if ($entry !== null) {
+                                        $inventory[] = $entry;
+                                    }
+                                } catch (\Throwable $e) {
+                                    continue;
+                                }
+                            }
+                        }
+                        break;
                     }
                 }
             }
 
             usort($inventory, fn ($a, $b) => $a['slot'] <=> $b['slot']);
 
-            return new JsonResponse([
-                'success' => true,
-                'inventory' => $inventory,
-            ]);
+            $hasArmor = count(array_filter($inventory, fn ($e) => $e['slot'] >= 100 && $e['slot'] <= 103)) > 0;
+            $showDebug = $request->query('debug') === '1' || $request->query('debug') === 'true' || !$hasArmor;
+
+            $response = ['success' => true, 'inventory' => $inventory];
+            if ($showDebug && !empty($debugInfo)) {
+                $response['_debug'] = $debugInfo;
+            }
+
+            return new JsonResponse($response);
         } catch (\Throwable $e) {
             return new JsonResponse([
                 'success' => false,
                 'error' => 'Failed to read player inventory',
                 'inventory' => [],
-            ], 500);
+            ], 200);
         }
     }
 }

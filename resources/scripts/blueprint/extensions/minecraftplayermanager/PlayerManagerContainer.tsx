@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ServerContext } from '@/state/server';
 import ServerContentBlock from '@/components/elements/ServerContentBlock';
 import Spinner from '@/components/elements/Spinner';
-import useSWR from 'swr';
+import useSWR, { mutate as mutateGlobal } from 'swr';
 import getStatus, { Player } from './api/getStatus';
 import { Button } from '@/components/elements/button/index';
 import { Dialog } from '@/components/elements/dialog/index';
@@ -49,6 +49,9 @@ import banipPlayer from './api/banipPlayer';
 import kill from './api/kill';
 import getStats from './api/getStats';
 import getInventory, { type InventoryItem } from './api/getInventory';
+import setGamemode, { type Gamemode } from './api/setGamemode';
+import setLevel from './api/setLevel';
+import setPosition from './api/setPosition';
 import UptimeDuration from '@/components/server/UptimeDuration';
 import getOffline from './api/getOffline';
 import Select from '@/components/elements/Select';
@@ -56,12 +59,11 @@ import OldInput from '@/components/elements/Input';
 import Tooltip from '@/components/elements/tooltip/Tooltip';
 
 const INVENTORY_SLOT_ORDER: number[][] = [
-    [100, 101, 102, 103],
-    [36, 37, 38, 39],
+    [100, 101, 102, 103, 40],
     [9, 10, 11, 12, 13, 14, 15, 16, 17],
     [18, 19, 20, 21, 22, 23, 24, 25, 26],
     [27, 28, 29, 30, 31, 32, 33, 34, 35],
-    [40, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8],
 ];
 
 function formatItemId(id: string): string {
@@ -81,10 +83,6 @@ const SLOT_LABELS: Record<number, string> = {
     101: 'Leggings',
     102: 'Chestplate',
     103: 'Helmet',
-    36: 'Boots',
-    37: 'Leggings',
-    38: 'Chestplate',
-    39: 'Helmet',
     40: 'Offhand',
 };
 
@@ -93,21 +91,21 @@ function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
     items.forEach((item) => bySlot.set(item.slot, item));
 
     return (
-        <div className={'flex flex-col gap-2'}>
+        <div className={'flex flex-col gap-2 w-fit max-w-full'}>
             <h2 className={'text-lg flex flex-row items-center mb-1'}>
                 <FontAwesomeIcon icon={faBox} className={'mr-2'} />
                 Inventory
             </h2>
-            <div className={'flex flex-col gap-1'}>
+            <div className={'flex flex-col gap-1 w-fit'}>
                 {INVENTORY_SLOT_ORDER.map((row, rowIndex) => (
                     <div
                         key={rowIndex}
                         className={
-                            row.length === 4
-                                ? 'grid grid-cols-4 gap-1 max-w-[180px]'
+                            row.length === 5
+                                ? 'grid grid-cols-5 gap-1 w-fit'
                                 : row.length === 10
-                                  ? 'grid grid-cols-10 gap-1'
-                                  : 'grid grid-cols-9 gap-1'
+                                  ? 'grid grid-cols-10 gap-1 w-fit'
+                                  : 'grid grid-cols-9 gap-1 w-fit'
                         }
                     >
                         {row.map((slot) => {
@@ -126,7 +124,7 @@ function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
                                 <Tooltip key={slot} content={tooltipContent} placement={'top'}>
                                     <div
                                         className={
-                                            'bg-neutral-700 rounded border border-neutral-600 flex items-center justify-center min-h-[44px] min-w-[44px] p-1 relative cursor-default'
+                                            'bg-neutral-700 rounded border border-neutral-600 flex items-center justify-center aspect-square w-11 min-w-0 p-1 relative cursor-default'
                                         }
                                     >
                                         {item ? (
@@ -134,24 +132,21 @@ function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
                                                 <img
                                                     src={itemIconUrl(item.id)}
                                                     alt={label}
-                                                    className={'w-8 h-8 object-contain flex-shrink-0'}
+                                                    className={'w-full h-full max-w-full max-h-full object-contain flex-shrink-0'}
                                                     onError={(e) => {
                                                         (e.target as HTMLImageElement).style.display = 'none';
                                                     }}
                                                 />
                                                 {count > 1 && (
-                                                    <span
-                                                        className={
-                                                            'absolute bottom-0 right-1 text-xs font-bold text-white drop-shadow'
-                                                        }
-                                                    >
+                                                    <span className={'absolute bottom-0 left-0.5 text-xs font-bold text-white drop-shadow'}>
                                                         {count}
                                                     </span>
                                                 )}
                                             </>
-                                        ) : (
-                                            <span className={'text-neutral-500 text-xs'}>{slot}</span>
-                                        )}
+                                        ) : null}
+                                        <span className={'absolute bottom-0 right-0.5 text-[10px] text-neutral-400 font-medium tabular-nums'}>
+                                            {slot}
+                                        </span>
                                     </div>
                                 </Tooltip>
                             );
@@ -627,15 +622,21 @@ export default function PlayerManagerContainer() {
                 )}
             </Dialog.Confirm>
 
-            <Dialog open={Boolean(player)} onClose={() => setPlayer(undefined)}>
+            <Dialog open={Boolean(player)} onClose={() => setPlayer(undefined)} panelClassName={'!max-w-5xl w-full'}>
                 {player && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
                             <img src={player.avatar} alt={''} className={'w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{player.name}</h1>
-                                <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === player.uuid)
+                                <p
+                                    className={
+                                        query?.online && query.players.list.find((p) => p.uuid === player.uuid)
+                                            ? '-mt-2 text-sm text-green-500 font-medium'
+                                            : '-mt-2 text-sm text-neutral-400'
+                                    }
+                                >
+                                    {query?.online && query.players.list.find((p) => p.uuid === player.uuid)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -907,12 +908,58 @@ export default function PlayerManagerContainer() {
                                             <FontAwesomeIcon icon={faLocationArrow} className={'mr-2'} />
                                             Position
                                         </h2>
-                                        <code className={'font-mono bg-neutral-700 rounded py-1 px-2 w-full block'}>
+                                        <code className={'font-mono bg-neutral-700 rounded py-1 px-2 w-full block mb-2'}>
                                             {stats.world ?? 'unknown'} @{' '}
-                                            {stats.position?.x ? Math.floor(stats.position.x) : '?'}{' '}
-                                            {stats.position?.y ? Math.floor(stats.position.y) : '?'}{' '}
-                                            {stats.position?.z ? Math.floor(stats.position.z) : '?'}
+                                            {stats.position?.x != null ? Math.floor(stats.position.x) : '?'}{' '}
+                                            {stats.position?.y != null ? Math.floor(stats.position.y) : '?'}{' '}
+                                            {stats.position?.z != null ? Math.floor(stats.position.z) : '?'}
                                         </code>
+                                        {query?.online && query.players.list.some((p) => p.uuid === player.uuid) && (
+                                            <div className={'flex flex-nowrap items-end gap-2 mb-3'}>
+                                                <Input.Text
+                                                    type={'number'}
+                                                    placeholder={'X'}
+                                                    className={'w-14 min-w-0'}
+                                                    defaultValue={stats.position?.x != null ? Math.floor(stats.position.x) : ''}
+                                                    id={'stats-pos-x'}
+                                                />
+                                                <Input.Text
+                                                    type={'number'}
+                                                    placeholder={'Y'}
+                                                    className={'w-14 min-w-0'}
+                                                    defaultValue={stats.position?.y != null ? Math.floor(stats.position.y) : ''}
+                                                    id={'stats-pos-y'}
+                                                />
+                                                <Input.Text
+                                                    type={'number'}
+                                                    placeholder={'Z'}
+                                                    className={'w-14 min-w-0'}
+                                                    defaultValue={stats.position?.z != null ? Math.floor(stats.position.z) : ''}
+                                                    id={'stats-pos-z'}
+                                                />
+                                                <Button
+                                                    size={Button.Sizes.Small}
+                                                    disabled={isLoading}
+                                                    onClick={async () => {
+                                                        const x = Number((document.getElementById('stats-pos-x') as HTMLInputElement)?.value);
+                                                        const y = Number((document.getElementById('stats-pos-y') as HTMLInputElement)?.value);
+                                                        const z = Number((document.getElementById('stats-pos-z') as HTMLInputElement)?.value);
+                                                        if (Number.isNaN(x) || Number.isNaN(y) || Number.isNaN(z)) return;
+                                                        setIsLoading(true);
+                                                        try {
+                                                            await setPosition(uuid, player.uuid, { x, y, z });
+                                                            await mutateGlobal(['players', 'stats', uuid, player.uuid]);
+                                                        } catch (e) {
+                                                            clearAndAddHttpError({ error: e as Error, key: 'players:view' });
+                                                        } finally {
+                                                            setIsLoading(false);
+                                                        }
+                                                    }}
+                                                >
+                                                    Apply
+                                                </Button>
+                                            </div>
+                                        )}
 
                                         <div className={'flex flex-row items-center mt-3'}>
                                             <div className={'flex flex-col w-1/2 pr-1'}>
@@ -927,6 +974,39 @@ export default function PlayerManagerContainer() {
                                                 >
                                                     {stats.gamemode ?? 'unknown'}
                                                 </code>
+                                                {query?.online && query.players.list.some((p) => p.uuid === player.uuid) && (
+                                                    <div className={'flex items-center gap-2 mt-1'}>
+                                                        <Select
+                                                            id={'stats-gamemode'}
+                                                            className={'flex-1'}
+                                                            defaultValue={stats.gamemode ?? 'survival'}
+                                                        >
+                                                            <option value={'survival'}>Survival</option>
+                                                            <option value={'creative'}>Creative</option>
+                                                            <option value={'adventure'}>Adventure</option>
+                                                            <option value={'spectator'}>Spectator</option>
+                                                        </Select>
+                                                        <Button
+                                                            size={Button.Sizes.Small}
+                                                            disabled={isLoading}
+                                                            onClick={async () => {
+                                                                const mode = (document.getElementById('stats-gamemode') as HTMLSelectElement)?.value as Gamemode;
+                                                                if (!mode) return;
+                                                                setIsLoading(true);
+                                                                try {
+                                                                    await setGamemode(uuid, player.uuid, mode);
+                                                                    await mutateGlobal(['players', 'stats', uuid, player.uuid]);
+                                                                } catch (e) {
+                                                                    clearAndAddHttpError({ error: e as Error, key: 'players:view' });
+                                                                } finally {
+                                                                    setIsLoading(false);
+                                                                }
+                                                            }}
+                                                        >
+                                                            Apply
+                                                        </Button>
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className={'flex flex-col w-1/2 pl-1'}>
@@ -991,6 +1071,38 @@ export default function PlayerManagerContainer() {
                                                 >
                                                     {stats.xp_level ?? 0} ({stats.xp_total ?? 0} XP)
                                                 </code>
+                                                {query?.online && query.players.list.some((p) => p.uuid === player.uuid) && (
+                                                    <div className={'flex items-center gap-2 mt-1'}>
+                                                        <Input.Text
+                                                            type={'number'}
+                                                            min={0}
+                                                            max={24791}
+                                                            placeholder={'Level'}
+                                                            className={'w-24'}
+                                                            id={'stats-level'}
+                                                            defaultValue={stats.xp_level ?? 0}
+                                                        />
+                                                        <Button
+                                                            size={Button.Sizes.Small}
+                                                            disabled={isLoading}
+                                                            onClick={async () => {
+                                                                const level = Number((document.getElementById('stats-level') as HTMLInputElement)?.value);
+                                                                if (Number.isNaN(level) || level < 0) return;
+                                                                setIsLoading(true);
+                                                                try {
+                                                                    await setLevel(uuid, player.uuid, level);
+                                                                    await mutateGlobal(['players', 'stats', uuid, player.uuid]);
+                                                                } catch (e) {
+                                                                    clearAndAddHttpError({ error: e as Error, key: 'players:view' });
+                                                                } finally {
+                                                                    setIsLoading(false);
+                                                                }
+                                                            }}
+                                                        >
+                                                            Apply
+                                                        </Button>
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className={'flex flex-col w-1/2 pl-1'}>

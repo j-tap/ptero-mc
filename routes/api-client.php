@@ -165,6 +165,7 @@ Route::group([
         Route::get('/', [Client\PluginManagerController::class, 'index']);
         Route::get('/installed', [Client\PluginManagerController::class, 'installed']);
         Route::post('/install/{pluginId}', [Client\PluginManagerController::class, 'install']);
+        Route::post('/toggle-disable', [Client\PluginManagerController::class, 'toggleDisable']);
         Route::delete('/{pluginId}', [Client\PluginManagerController::class, 'uninstall']);
     });
 });
