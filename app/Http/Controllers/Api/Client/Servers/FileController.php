@@ -2,6 +2,7 @@
 
 namespace Pterodactyl\Http\Controllers\Api\Client\Servers;
 
+use Illuminate\Support\Arr;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Response;
 use Pterodactyl\Models\Server;
@@ -22,9 +23,24 @@ use Pterodactyl\Http\Requests\Api\Client\Servers\Files\CompressFilesRequest;
 use Pterodactyl\Http\Requests\Api\Client\Servers\Files\DecompressFilesRequest;
 use Pterodactyl\Http\Requests\Api\Client\Servers\Files\GetFileContentsRequest;
 use Pterodactyl\Http\Requests\Api\Client\Servers\Files\WriteFileContentRequest;
+use Pterodactyl\Http\Requests\Api\Client\Servers\Files\SearchFilesRequest;
 
 class FileController extends ClientApiController
 {
+    private const SEARCHABLE_EXTENSIONS = [
+        'txt', 'log', 'md', 'yml', 'yaml', 'json', 'properties', 'conf', 'cfg', 'ini', 'env',
+        'xml', 'html', 'htm', 'css', 'js', 'ts', 'jsx', 'tsx', 'sh', 'bat', 'ps1',
+        'php', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'h', 'cpp', 'hpp',
+    ];
+
+    private const SEARCH_MAX_FILES = 80;
+
+    private const SEARCH_MAX_DEPTH = 8;
+
+    private const SEARCH_MAX_FILE_SIZE = 256 * 1024;
+
+    private const SNIPPET_LENGTH = 120;
+
     /**
      * FileController constructor.
      */
@@ -66,6 +82,90 @@ class FileController extends ClientApiController
         Activity::event('server:file.read')->property('file', $request->get('file'))->log();
 
         return new Response($response, Response::HTTP_OK, ['Content-Type' => 'text/plain']);
+    }
+
+    /**
+     * Search file contents in the given directory and all nested directories. Returns matching paths and snippets.
+     */
+    public function search(SearchFilesRequest $request, Server $server): array
+    {
+        $dir = $request->get('directory');
+        $q = $request->input('q');
+        $repo = $this->fileRepository->setServer($server);
+
+        $paths = $this->collectSearchablePaths($repo, $dir, 0, self::SEARCH_MAX_FILES);
+
+        $maxSize = min(config('pterodactyl.files.max_edit_size'), self::SEARCH_MAX_FILE_SIZE);
+        $results = [];
+        foreach ($paths as $relativePath) {
+            try {
+                $content = $repo->getContent($relativePath, $maxSize);
+                $pos = mb_stripos($content, $q);
+                if ($pos === false) {
+                    continue;
+                }
+                $start = max(0, $pos - (int) (self::SNIPPET_LENGTH / 2));
+                $snippet = mb_substr($content, $start, self::SNIPPET_LENGTH);
+                $snippet = preg_replace('/\s+/', ' ', trim($snippet));
+                if (mb_strlen($snippet) > self::SNIPPET_LENGTH) {
+                    $snippet = mb_substr($snippet, 0, self::SNIPPET_LENGTH - 1) . '…';
+                }
+                $results[] = [
+                    'path' => $relativePath,
+                    'snippet' => $snippet,
+                ];
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        return [
+            'object' => 'list',
+            'data' => array_values($results),
+        ];
+    }
+
+    /**
+     * Recursively collect paths of searchable files in directory and subdirectories.
+     *
+     * @param  array<int, string>  $collected
+     * @return array<int, string>
+     */
+    private function collectSearchablePaths(DaemonFileRepository $repo, string $dir, int $depth, int $limit, array &$collected = []): array
+    {
+        if ($depth >= self::SEARCH_MAX_DEPTH || count($collected) >= $limit) {
+            return $collected;
+        }
+
+        try {
+            $contents = $repo->getDirectory($dir);
+        } catch (\Throwable $e) {
+            return $collected;
+        }
+
+        foreach ($contents as $item) {
+            $name = Arr::get($item, 'name', '');
+            $isFile = Arr::get($item, 'file', true) === true;
+            $prefix = ($dir === '/' ? '' : $dir) . '/' . $name;
+            $relativePath = ltrim($prefix, '/');
+
+            if ($isFile) {
+                $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                if (in_array($ext, self::SEARCHABLE_EXTENSIONS, true)) {
+                    $collected[] = $relativePath;
+                    if (count($collected) >= $limit) {
+                        return $collected;
+                    }
+                }
+            } else {
+                $this->collectSearchablePaths($repo, $dir === '/' ? '/' . $name : $prefix, $depth + 1, $limit, $collected);
+                if (count($collected) >= $limit) {
+                    return $collected;
+                }
+            }
+        }
+
+        return $collected;
     }
 
     /**
