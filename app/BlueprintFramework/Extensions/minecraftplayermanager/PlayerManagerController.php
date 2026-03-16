@@ -162,7 +162,7 @@ class PlayerManagerController extends ClientApiController
                     'name' => $op['name'],
                     'level' => $op['level'],
                     'bypassesPlayerLimit' => $op['bypassesPlayerLimit'],
-                    'avatar' => "https://minotar.net/helm/$uuid/256.png",
+                    'avatar' => $this->avatarUrl($op['uuid']),
                 ];
             }
         }
@@ -177,7 +177,7 @@ class PlayerManagerController extends ClientApiController
                 $whitelisted[] = [
                     'uuid' => $whitelist['uuid'],
                     'name' => $whitelist['name'],
-                    'avatar' => "https://minotar.net/helm/$uuid/256.png",
+                    'avatar' => $this->avatarUrl($whitelist['uuid']),
                 ];
             }
         }
@@ -193,7 +193,7 @@ class PlayerManagerController extends ClientApiController
                     'uuid' => $ban['uuid'],
                     'name' => $ban['name'],
                     'reason' => $ban['reason'],
-                    'avatar' => "https://minotar.net/helm/$uuid/256.png",
+                    'avatar' => $this->avatarUrl($ban['uuid']),
                 ];
             }
         }
@@ -222,7 +222,7 @@ class PlayerManagerController extends ClientApiController
                 $players[] = [
                     'uuid' => $player['id'],
                     'name' => $player['name'],
-                    'avatar' => "https://minotar.net/helm/$uuid/256.png",
+                    'avatar' => $this->avatarUrl($player['id']),
                 ];
             }
 
@@ -325,7 +325,7 @@ class PlayerManagerController extends ClientApiController
                 $players[] = [
                     'uuid' => $uuid,
                     'name' => $name,
-                    'avatar' => "https://minotar.net/helm/$uuid/256.png",
+                    'avatar' => $this->avatarUrl($uuid),
                 ];
             }
         }
@@ -337,7 +337,22 @@ class PlayerManagerController extends ClientApiController
     }
 
     private const MINESKIN_API = 'https://api.mineskin.org';
-    private const MINOTAR_SKIN = 'https://minotar.net/skin';
+    private const MINOTAR_AVATAR = 'https://minotar.net/helm/{uuid}/256.png';
+    private const MINOTAR_SKIN = 'https://minotar.net/skin/{uuid}';
+
+    private function avatarUrl(string $uuid): string
+    {
+        $uuid = str_replace('-', '', $uuid);
+
+        return str_replace('{uuid}', $uuid, config('minecraftplayermanager.avatar_url', self::MINOTAR_AVATAR));
+    }
+
+    private function skinTextureUrl(string $uuid): string
+    {
+        $uuidClean = str_replace('-', '', $uuid);
+
+        return str_replace('{uuid}', $uuidClean, config('minecraftplayermanager.skin_url', self::MINOTAR_SKIN));
+    }
 
     public function skin(PlayerManagerGetRequest $request)
     {
@@ -359,34 +374,30 @@ class PlayerManagerController extends ClientApiController
         }
 
         $uuid = $this->utils->formatUuid($uuid);
-        $uuidParam = str_replace('-', '', $uuid);
-
-        $skinUrl = self::MINOTAR_SKIN . '/' . $uuidParam;
+        $skinUrl = $this->skinTextureUrl($uuid);
         $capeUrl = null;
 
-        $apiUrl = self::MINESKIN_API . '/get/uuid/' . $uuid;
-        $headers = [
-            'User-Agent: Pterodactyl-PlayerManager/1.0',
-        ];
         $apiKey = env('MINESKIN_API_KEY');
         if ($apiKey) {
-            $headers[] = 'Authorization: Bearer ' . $apiKey;
-        }
-
-        $ctx = stream_context_create([
-            'http' => [
-                'method' => 'GET',
-                'header' => implode("\r\n", $headers),
-                'timeout' => 3,
-                'ignore_errors' => true,
-            ],
-        ]);
-
-        $raw = @file_get_contents($apiUrl, false, $ctx);
-        if ($raw !== false) {
-            $data = json_decode($raw, true);
-            if (isset($data['data']['texture']['url'])) {
-                $skinUrl = $data['data']['texture']['url'];
+            $apiUrl = self::MINESKIN_API . '/get/uuid/' . $uuid;
+            $headers = [
+                'User-Agent: Pterodactyl-PlayerManager/1.0',
+                'Authorization: Bearer ' . $apiKey,
+            ];
+            $ctx = stream_context_create([
+                'http' => [
+                    'method' => 'GET',
+                    'header' => implode("\r\n", $headers),
+                    'timeout' => 3,
+                    'ignore_errors' => true,
+                ],
+            ]);
+            $raw = @file_get_contents($apiUrl, false, $ctx);
+            if ($raw !== false) {
+                $data = json_decode($raw, true);
+                if (isset($data['data']['texture']['url'])) {
+                    $skinUrl = $data['data']['texture']['url'];
+                }
             }
         }
 

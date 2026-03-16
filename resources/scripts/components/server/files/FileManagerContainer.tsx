@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { httpErrorToHuman } from '@/api/http';
 import { CSSTransition } from 'react-transition-group';
 import Spinner from '@/components/elements/Spinner';
@@ -21,8 +21,8 @@ import ServerContentBlock from '@/components/elements/ServerContentBlock';
 import { useStoreActions } from '@/state/hooks';
 import ErrorBoundary from '@/components/elements/ErrorBoundary';
 import { FileActionCheckbox } from '@/components/server/files/SelectFileCheckbox';
-import searchFiles from '@/api/server/files/searchFiles';
-import type { FileSearchHit } from '@/api/server/files/searchFiles';
+import searchFiles, { searchFilesStream } from '@/api/server/files/searchFiles';
+import type { FileSearchHit, FileSearchDebug } from '@/api/server/files/searchFiles';
 import { hashToPath, encodePathSegments } from '@/helpers';
 import style from './style.module.css';
 
@@ -54,7 +54,9 @@ export default () => {
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<FileSearchHit[] | null>(null);
+    const [searchDebug, setSearchDebug] = useState<FileSearchDebug | null>(null);
     const [searchLoading, setSearchLoading] = useState(false);
+    const searchAbortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         clearFlashes('files');
@@ -70,20 +72,39 @@ export default () => {
         const q = searchQuery.trim();
         if (q.length < MIN_SEARCH_LEN) {
             setSearchResults(null);
+            setSearchDebug(null);
             setSearchLoading(false);
             return;
         }
         const run = debounce(() => {
             if (!uuid) return;
+            searchAbortRef.current?.abort();
+            searchAbortRef.current = new AbortController();
+            setSearchResults([]);
+            setSearchDebug(null);
             setSearchLoading(true);
-            searchFiles(uuid, directory || '/', q)
-                .then(setSearchResults)
-                .catch(() => setSearchResults([]))
-                .finally(() => setSearchLoading(false));
+            searchFilesStream(
+                uuid,
+                directory || '/',
+                q,
+                {
+                    onResult: (hit) => setSearchResults((prev) => [...(prev ?? []), hit]),
+                    onDone: (debug) => {
+                        setSearchDebug(debug ?? null);
+                        setSearchLoading(false);
+                    },
+                    onError: () => {
+                        setSearchDebug(null);
+                        setSearchLoading(false);
+                    },
+                },
+                searchAbortRef.current.signal
+            );
         }, 350);
         run();
         return () => {
             run.clear?.();
+            searchAbortRef.current?.abort();
         };
     }, [searchQuery, uuid, directory]);
 
@@ -105,11 +126,11 @@ export default () => {
                     <div css={tw`mb-3`}>
                         <input
                             type="search"
-                            placeholder="Поиск по содержимому (текущая папка и вложенные)…"
+                            placeholder="Search file contents (current folder and subfolders)…"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             css={tw`w-full max-w-md rounded bg-neutral-700 border border-neutral-600 text-neutral-200 placeholder-neutral-500 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent`}
-                            aria-label="Поиск по содержимому файлов"
+                            aria-label="Search file contents"
                         />
                     </div>
                 </Can>
@@ -139,10 +160,16 @@ export default () => {
             </ErrorBoundary>
             {showContentSearch ? (
                 <div css={tw`mb-4`}>
-                    <p css={tw`text-neutral-400 text-sm mb-2`}>Результаты поиска</p>
-                    {searchLoading ? (
-                        <Spinner size="base" />
-                    ) : searchResults && searchResults.length > 0 ? (
+                    <p css={tw`text-neutral-400 text-sm mb-2 flex items-center gap-2`}>
+                        Search results
+                        {searchLoading && (
+                            <>
+                                <Spinner size="small" />
+                                <span css={tw`text-neutral-500 text-xs`}>Searching…</span>
+                            </>
+                        )}
+                    </p>
+                    {searchResults && searchResults.length > 0 ? (
                         <ul css={tw`space-y-2`}>
                             {searchResults.map((hit) => (
                                 <li key={hit.path}>
@@ -161,8 +188,17 @@ export default () => {
                                 </li>
                             ))}
                         </ul>
-                    ) : searchResults && searchResults.length === 0 ? (
-                        <p css={tw`text-neutral-500 text-sm`}>Ничего не найдено</p>
+                    ) : searchResults && searchResults.length === 0 && !searchLoading ? (
+                        <div>
+                            <p css={tw`text-neutral-500 text-sm`}>Nothing found</p>
+                            {searchDebug && (
+                                <pre
+                                    css={tw`mt-3 p-3 rounded bg-neutral-800 border border-neutral-600 text-neutral-400 text-xs overflow-auto max-h-48`}
+                                >
+                                    {JSON.stringify(searchDebug, null, 2)}
+                                </pre>
+                            )}
+                        </div>
                     ) : null}
                 </div>
             ) : !files ? (

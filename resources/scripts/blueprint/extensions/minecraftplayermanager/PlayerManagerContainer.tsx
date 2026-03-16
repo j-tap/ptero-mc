@@ -13,6 +13,7 @@ import {
     faBan,
     faBox,
     faCog,
+    faCrown,
     faCross,
     faExclamationTriangle,
     faInfoCircle,
@@ -628,7 +629,20 @@ export default function PlayerManagerContainer() {
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
                             <img src={player.avatar} alt={''} className={'w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
-                                <h1 className={'text-lg'}>{player.name}</h1>
+                                <span className={'flex items-center gap-2 flex-wrap'}>
+                                    <h1 className={'text-lg'}>{player.name}</h1>
+                                    {query?.opped?.some((p) => p.uuid === player.uuid) && (
+                                        <span
+                                            className={
+                                                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                            }
+                                            title={'Operator'}
+                                        >
+                                            <FontAwesomeIcon icon={faCrown} className={'text-amber-400'} />
+                                            OP
+                                        </span>
+                                    )}
+                                </span>
                                 <p
                                     className={
                                         query?.online && query.players.list.find((p) => p.uuid === player.uuid)
@@ -1414,7 +1428,12 @@ export default function PlayerManagerContainer() {
                             ) : (
                                 <div className={'w-full grid grid-cols-[repeat(auto-fill,minmax(20rem,1fr))] gap-2'}>
                                     {query.players.list.map((player) => (
-                                        <PlayerRow key={player.uuid} player={player} onOpen={() => setPlayer(player)} />
+                                        <PlayerRow
+                                            key={player.uuid}
+                                            player={player}
+                                            onOpen={() => setPlayer(player)}
+                                            isOp={query.opped.some((p) => p.uuid === player.uuid)}
+                                        />
                                     ))}
                                 </div>
                             )}
@@ -1544,7 +1563,12 @@ export default function PlayerManagerContainer() {
                             {viewing === 'opped' ? (
                                 <>
                                     {query.opped.map((player) => (
-                                        <PlayerRow key={player.uuid} player={player} onOpen={() => setPlayer(player)} />
+                                        <PlayerRow
+                                            key={player.uuid}
+                                            player={player}
+                                            onOpen={() => setPlayer(player)}
+                                            isOp
+                                        />
                                     ))}
                                     <div
                                         className={
@@ -1558,7 +1582,12 @@ export default function PlayerManagerContainer() {
                             ) : viewing === 'whitelisted' ? (
                                 <>
                                     {query.whitelist.list.map((player) => (
-                                        <PlayerRow key={player.uuid} player={player} onOpen={() => setPlayer(player)} />
+                                        <PlayerRow
+                                            key={player.uuid}
+                                            player={player}
+                                            onOpen={() => setPlayer(player)}
+                                            isOp={query.opped.some((p) => p.uuid === player.uuid)}
+                                        />
                                     ))}
                                     <div
                                         className={
@@ -1606,6 +1635,7 @@ export default function PlayerManagerContainer() {
                                                 key={player.uuid}
                                                 player={player}
                                                 onOpen={() => setPlayer(player)}
+                                                isOp={query.opped.some((p) => p.uuid === player.uuid)}
                                             />
                                         ))}
 
@@ -1624,6 +1654,7 @@ export default function PlayerManagerContainer() {
                                             extra={player.reason}
                                             player={player}
                                             onOpen={() => setPlayer(player)}
+                                            isOp={query.opped.some((p) => p.uuid === player.uuid)}
                                         />
                                     ))}
 

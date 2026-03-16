@@ -8,6 +8,7 @@ use Pterodactyl\Models\Server;
 use Psr\Http\Message\ResponseInterface;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\TransferException;
+use GuzzleHttp\Promise\Utils;
 use Pterodactyl\Exceptions\Http\Server\FileSizeTooLargeException;
 use Pterodactyl\Exceptions\Http\Connection\DaemonConnectionException;
 
@@ -47,6 +48,47 @@ class DaemonFileRepository extends DaemonRepository
         }
 
         return $response->getBody()->__toString();
+    }
+
+    /**
+     * Return contents of multiple files in parallel. Returns map path => content; skips failed or too large.
+     *
+     * @param  array<int, string>  $paths
+     * @return array<string, string>
+     */
+    public function getContentsBatch(array $paths, ?int $notLargerThan = null, int $concurrency = 20): array
+    {
+        Assert::isInstanceOf($this->server, Server::class);
+        if ($paths === []) {
+            return [];
+        }
+
+        $client = $this->getHttpClient();
+        $pathList = array_values($paths);
+        $promises = [];
+        foreach ($pathList as $i => $path) {
+            $promises[$i] = $client->requestAsync(
+                'GET',
+                sprintf('/api/servers/%s/files/contents', $this->server->uuid),
+                ['query' => ['file' => $path]]
+            );
+        }
+
+        $settled = Utils::settle($promises)->wait();
+        $results = [];
+        foreach ($settled as $i => $outcome) {
+            if ($outcome['state'] !== 'fulfilled') {
+                continue;
+            }
+            $response = $outcome['value'];
+            $length = (int) $response->getHeaderLine('Content-Length');
+            if ($notLargerThan !== null && $length > $notLargerThan) {
+                continue;
+            }
+            $results[$pathList[$i]] = $response->getBody()->getContents();
+        }
+
+        return $results;
     }
 
     /**
