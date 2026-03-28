@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ServerContext } from '@/state/server';
 import ServerContentBlock from '@/components/elements/ServerContentBlock';
 import Spinner from '@/components/elements/Spinner';
@@ -7,7 +7,7 @@ import getStatus, { Player } from './api/getStatus';
 import { Button } from '@/components/elements/button/index';
 import { Dialog } from '@/components/elements/dialog/index';
 import useFlash from '@/plugins/useFlash';
-import PlayerRow from './PlayerRow';
+import PlayerTable from './PlayerTable';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
     faBan,
@@ -27,7 +27,6 @@ import {
     faUserClock,
     faUserCog,
     faUserPlus,
-    faUserSlash,
     faWineBottle,
 } from '@fortawesome/free-solid-svg-icons';
 import removeWhitelist from './api/removeWhitelist';
@@ -54,7 +53,7 @@ import setGamemode, { type Gamemode } from './api/setGamemode';
 import setLevel from './api/setLevel';
 import setPosition from './api/setPosition';
 import UptimeDuration from '@/components/server/UptimeDuration';
-import getOffline from './api/getOffline';
+import getOffline, { type OfflinePlayer } from './api/getOffline';
 import Select from '@/components/elements/Select';
 import OldInput from '@/components/elements/Input';
 import Tooltip from '@/components/elements/tooltip/Tooltip';
@@ -166,7 +165,7 @@ export default function PlayerManagerContainer() {
     const [isLoading, setIsLoading] = useState(false);
     const [search, setSearch] = useState('');
     const [limit, setLimit] = useState(50);
-    const [viewing, setViewing] = useState<'opped' | 'whitelisted' | 'banned' | 'banned-ips' | 'offline'>('opped');
+    const [viewing, setViewing] = useState<'all' | 'opped' | 'whitelisted' | 'banned' | 'banned-ips'>('all');
     const [player, setPlayer] = useState<Player>();
     const [playerPage, setPlayerPage] = useState<'actions' | 'stats' | 'inventory'>('actions');
     const [reason, setReason] = useState<string>('');
@@ -205,6 +204,42 @@ export default function PlayerManagerContainer() {
         player && playerPage === 'inventory' ? ['players', 'inventory', uuid, player.uuid] : null,
         () => getInventory(uuid, player!.uuid),
         { revalidateOnFocus: false }
+    );
+
+    const onlinePlayerUuids = useMemo(() => {
+        if (!query?.online) {
+            return new Set<string>();
+        }
+
+        return new Set(query.players.list.map((nextPlayer) => nextPlayer.uuid));
+    }, [query]);
+
+    const allPlayers = useMemo<OfflinePlayer[]>(() => {
+        const merged = new Map<string, OfflinePlayer>();
+
+        (offline ?? []).forEach((nextPlayer) => {
+            merged.set(nextPlayer.uuid, nextPlayer);
+        });
+
+        if (query?.online) {
+            query.players.list.forEach((nextPlayer) => {
+                const existing = merged.get(nextPlayer.uuid);
+                merged.set(nextPlayer.uuid, {
+                    ...existing,
+                    ...nextPlayer,
+                    playtime: existing?.playtime ?? null,
+                    first_seen_at: existing?.first_seen_at ?? null,
+                    last_logout_at: existing?.last_logout_at ?? null,
+                });
+            });
+        }
+
+        return Array.from(merged.values());
+    }, [offline, query]);
+
+    const filteredAllPlayers = useMemo(
+        () => allPlayers.filter((nextPlayer) => nextPlayer.name.toLowerCase().includes(search.toLowerCase())).slice(0, limit),
+        [allPlayers, limit, search]
     );
 
     if (!query) {
@@ -1410,39 +1445,6 @@ export default function PlayerManagerContainer() {
             <FlashMessageRender byKey={'players:view'} className={'mb-4'} />
 
             <div className={'flex flex-col w-full'}>
-                {query.online && (
-                    <>
-                        <div className={'w-full mb-8 flex flex-col'}>
-                            <div className={'flex flex-row justify-between items-center w-full'}>
-                                <h1 className={'text-2xl mb-4'}>Currently playing</h1>
-                                <h1 className={'text-sm text-neutral-400 text-right'}>
-                                    ({query.is_proxy ? 'proxy' : query.is_proxied ? 'proxied' : 'direct'}@
-                                    {query.ping.toFixed(2)}ms, {query.online_mode ? 'online mode' : 'offline mode'})
-                                    <br />
-                                    {query.players.online} / {query.players.max} online
-                                </h1>
-                            </div>
-
-                            {!query.players.list.length ? (
-                                <p className={'text-sm text-neutral-400'}>No players are currently online.</p>
-                            ) : (
-                                <div className={'w-full grid grid-cols-[repeat(auto-fill,minmax(20rem,1fr))] gap-2'}>
-                                    {query.players.list.map((player) => (
-                                        <PlayerRow
-                                            key={player.uuid}
-                                            player={player}
-                                            onOpen={() => setPlayer(player)}
-                                            isOp={query.opped.some((p) => p.uuid === player.uuid)}
-                                        />
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className={'my-8 border border-gray-700 border-b w-full'} />
-                    </>
-                )}
-
                 {!query.is_proxy ? (
                     <>
                         <div
@@ -1452,6 +1454,9 @@ export default function PlayerManagerContainer() {
                         >
                             <h1 className={'text-2xl'}>Player management</h1>
                             <div className={'flex flex-row'}>
+                                <Button.Text disabled={viewing === 'all'} onClick={() => setViewing('all')}>
+                                    Players
+                                </Button.Text>
                                 <Button.Text disabled={viewing === 'opped'} onClick={() => setViewing('opped')}>
                                     Opped
                                 </Button.Text>
@@ -1469,17 +1474,18 @@ export default function PlayerManagerContainer() {
                                 >
                                     Banned
                                 </Button.Text>
-                                <Button.Text
-                                    disabled={viewing === 'offline'}
-                                    onClick={() => setViewing('offline')}
-                                    className={'ml-2'}
-                                >
-                                    Offline
-                                </Button.Text>
                             </div>
                         </div>
 
-                        {viewing === 'opped' ? (
+                        <p className={'text-sm text-neutral-400 mb-2'}>
+                            Online players: {query.online ? query.players.online : 0}
+                        </p>
+
+                        {viewing === 'all' ? (
+                            <Banner title={'All players'} className={'bg-gray-700'} icon={<FontAwesomeIcon icon={faUserPlus} />}>
+                                Unified player list. Online players are highlighted in green and sorted first by default.
+                            </Banner>
+                        ) : viewing === 'opped' ? (
                             <Banner
                                 title={'Operators'}
                                 className={'bg-gray-700'}
@@ -1530,16 +1536,6 @@ export default function PlayerManagerContainer() {
                                 able to join. Enabling the whitelist is highly recommended if this is not a public
                                 server.
                             </Banner>
-                        ) : viewing === 'offline' ? (
-                            <Banner
-                                title={'Offline players'}
-                                className={'bg-gray-700'}
-                                icon={<FontAwesomeIcon icon={faUserSlash} />}
-                            >
-                                Offline players are players who have previously connected to the server, are still
-                                cached but are not currently online. You can still manage their data and perform actions
-                                on them.
-                            </Banner>
                         ) : (
                             <Banner
                                 title={'Banned players/IPs'}
@@ -1559,55 +1555,13 @@ export default function PlayerManagerContainer() {
                             </Banner>
                         )}
 
-                        <div className={'mt-2 w-full grid grid-cols-[repeat(auto-fill,minmax(20rem,1fr))] gap-2'}>
-                            {viewing === 'opped' ? (
+                        <div className={'mt-2 w-full flex flex-col gap-3'}>
+                            {viewing === 'all' ? (
                                 <>
-                                    {query.opped.map((player) => (
-                                        <PlayerRow
-                                            key={player.uuid}
-                                            player={player}
-                                            onOpen={() => setPlayer(player)}
-                                            isOp
-                                        />
-                                    ))}
-                                    <div
-                                        className={
-                                            'bg-gray-700 cursor-pointer hover:bg-gray-600 transition-all p-3 rounded-md w-full min-w-[20rem] flex flex-row justify-center items-center'
-                                        }
-                                        onClick={() => setNewOpModalVisible(true)}
-                                    >
-                                        <FontAwesomeIcon icon={faPlus} className={'h-12'} />
-                                    </div>
-                                </>
-                            ) : viewing === 'whitelisted' ? (
-                                <>
-                                    {query.whitelist.list.map((player) => (
-                                        <PlayerRow
-                                            key={player.uuid}
-                                            player={player}
-                                            onOpen={() => setPlayer(player)}
-                                            isOp={query.opped.some((p) => p.uuid === player.uuid)}
-                                        />
-                                    ))}
-                                    <div
-                                        className={
-                                            'bg-gray-700 cursor-pointer hover:bg-gray-600 transition-all p-3 rounded-md w-full min-w-[20rem] flex flex-row justify-center items-center'
-                                        }
-                                        onClick={() => setNewWhitelistModalVisible(true)}
-                                    >
-                                        <FontAwesomeIcon icon={faPlus} className={'h-12'} />
-                                    </div>
-                                </>
-                            ) : viewing === 'offline' ? (
-                                <>
-                                    {!!offline?.length && (
-                                        <div
-                                            className={
-                                                'col-span-full grid grid-cols-4 gap-2 items-center justify-between'
-                                            }
-                                        >
+                                    {!!allPlayers.length && (
+                                        <div className={'grid grid-cols-4 gap-2 items-center justify-between'}>
                                             <OldInput
-                                                placeholder={'Search offline players...'}
+                                                placeholder={'Search players...'}
                                                 value={search}
                                                 onChange={(e) => setSearch(e.target.value)}
                                                 className={'w-full col-span-3'}
@@ -1626,46 +1580,63 @@ export default function PlayerManagerContainer() {
                                             </Select>
                                         </div>
                                     )}
-
-                                    {offline
-                                        ?.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
-                                        .slice(0, limit)
-                                        .map((player) => (
-                                            <PlayerRow
-                                                key={player.uuid}
-                                                player={player}
-                                                onOpen={() => setPlayer(player)}
-                                                isOp={query.opped.some((p) => p.uuid === player.uuid)}
-                                            />
-                                        ))}
-
-                                    {!offline?.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
-                                        .length && (
-                                        <p className={'text-neutral-400 text-sm'}>
-                                            No offline players are currently available.
-                                        </p>
-                                    )}
+                                    <PlayerTable
+                                        players={filteredAllPlayers}
+                                        emptyMessage={'No players are currently available.'}
+                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
+                                        isOnline={(nextPlayer) => onlinePlayerUuids.has(nextPlayer.uuid)}
+                                        isOp={(nextPlayer) => query.opped.some((p) => p.uuid === nextPlayer.uuid)}
+                                        defaultSortKey={'status'}
+                                        defaultSortDirection={'desc'}
+                                    />
+                                </>
+                            ) : viewing === 'opped' ? (
+                                <>
+                                    <div className={'flex justify-end'}>
+                                        <Button.Text onClick={() => setNewOpModalVisible(true)}>
+                                            <FontAwesomeIcon icon={faPlus} className={'mr-2'} />
+                                            Add Operator
+                                        </Button.Text>
+                                    </div>
+                                    <PlayerTable
+                                        players={query.opped}
+                                        emptyMessage={'No operators found.'}
+                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
+                                        isOnline={(nextPlayer) => query.online && query.players.list.some((p) => p.uuid === nextPlayer.uuid)}
+                                        isOp={() => true}
+                                    />
+                                </>
+                            ) : viewing === 'whitelisted' ? (
+                                <>
+                                    <div className={'flex justify-end'}>
+                                        <Button.Text onClick={() => setNewWhitelistModalVisible(true)}>
+                                            <FontAwesomeIcon icon={faPlus} className={'mr-2'} />
+                                            Add to Whitelist
+                                        </Button.Text>
+                                    </div>
+                                    <PlayerTable
+                                        players={query.whitelist.list}
+                                        emptyMessage={'No whitelisted players found.'}
+                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
+                                        isOnline={(nextPlayer) => query.online && query.players.list.some((p) => p.uuid === nextPlayer.uuid)}
+                                        isOp={(nextPlayer) => query.opped.some((p) => p.uuid === nextPlayer.uuid)}
+                                    />
                                 </>
                             ) : (
                                 <>
-                                    {query.banned.players.map((player) => (
-                                        <PlayerRow
-                                            key={player.uuid}
-                                            extra={player.reason}
-                                            player={player}
-                                            onOpen={() => setPlayer(player)}
-                                            isOp={query.opped.some((p) => p.uuid === player.uuid)}
-                                        />
-                                    ))}
-
-                                    <div
-                                        className={
-                                            'bg-gray-700 cursor-pointer hover:bg-gray-600 transition-all p-3 rounded-md w-full min-w-[20rem] flex flex-row justify-center items-center'
-                                        }
-                                        onClick={() => setNewBanModalVisible(true)}
-                                    >
-                                        <FontAwesomeIcon icon={faPlus} className={'h-12'} />
+                                    <div className={'flex justify-end'}>
+                                        <Button.Text onClick={() => setNewBanModalVisible(true)}>
+                                            <FontAwesomeIcon icon={faPlus} className={'mr-2'} />
+                                            Add Ban
+                                        </Button.Text>
                                     </div>
+                                    <PlayerTable
+                                        players={query.banned.players}
+                                        emptyMessage={'No banned players found.'}
+                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
+                                        isOp={(nextPlayer) => query.opped.some((p) => p.uuid === nextPlayer.uuid)}
+                                        showReason
+                                    />
                                 </>
                             )}
                         </div>

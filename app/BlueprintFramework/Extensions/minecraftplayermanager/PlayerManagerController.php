@@ -140,6 +140,43 @@ class PlayerManagerController extends ClientApiController
         return $list;
     }
 
+    private function normalizeDaemonDate(?string $value): ?string
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($value))->format(\DateTimeInterface::ATOM);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    private function extractPlaytimeSeconds(?string $statsRaw): ?int
+    {
+        if (!is_string($statsRaw) || trim($statsRaw) === '') {
+            return null;
+        }
+
+        $stats = json_decode($statsRaw, true);
+        if (!is_array($stats)) {
+            return null;
+        }
+
+        $playTimeTicks = $stats['stats']['minecraft:custom']['minecraft:play_time'] ?? null;
+        if (!is_numeric($playTimeTicks)) {
+            return null;
+        }
+
+        $ticks = (int) $playTimeTicks;
+        if ($ticks < 0) {
+            return null;
+        }
+
+        return (int) floor($ticks / 20);
+    }
+
     public function index(PlayerManagerGetRequest $request, Server $server): array
     {
         $properties = $this->utils->configs($server)['server.properties'];
@@ -299,40 +336,65 @@ class PlayerManagerController extends ClientApiController
             ], 400);
         }
 
-        try {
-            $query = $this->queryApi($server);
-
-            $exclude = array_map(function ($player) {
-                return "{$this->utils->formatUuid($player['id'])}.dat";
-            }, $query['players']['list'] ?? []);
-        } catch (\Throwable $e) {
-            $exclude = [];
-        }
-
-        $cache = $this->cache->collect($server);
-        $playerData = $this->fileRepository->setServer($server)->getDirectory("$levelName/playerdata");
-        $players = [];
-
-        foreach ($playerData as $file) {
-            if (!str_ends_with($file['name'], '.dat') || in_array($file['name'], $exclude)) {
-                continue;
+        $players = Cache::remember("minecraftserver:offline:{$server->id}", 30, function () use ($server, $levelName) {
+            try {
+                $query = $this->queryApi($server);
+                $exclude = array_map(function ($player) {
+                    return "{$this->utils->formatUuid($player['id'])}.dat";
+                }, $query['players']['list'] ?? []);
+            } catch (\Throwable $e) {
+                $exclude = [];
             }
 
-            $uuid = str_replace('.dat', '', $file['name']);
-            $name = $cache->get(str_replace('-', '', $uuid));
+            $cache = $this->cache->collect($server);
+            $playerData = $this->fileRepository->setServer($server)->getDirectory("$levelName/playerdata");
+            $players = [];
+            $statsPaths = [];
 
-            if ($name) {
-                $players[] = [
+            foreach ($playerData as $file) {
+                $filename = $file['name'] ?? null;
+                if (!is_string($filename) || !str_ends_with($filename, '.dat') || in_array($filename, $exclude, true)) {
+                    continue;
+                }
+
+                $uuid = str_replace('.dat', '', $filename);
+                if (!preg_match('/^[a-fA-F0-9-]{32,36}$/', $uuid)) {
+                    continue;
+                }
+
+                $name = $cache->get(str_replace('-', '', $uuid));
+                if (!$name) {
+                    continue;
+                }
+
+                $players[$uuid] = [
                     'uuid' => $uuid,
                     'name' => $name,
                     'avatar' => $this->avatarUrl($uuid),
+                    'first_seen_at' => $this->normalizeDaemonDate($file['created'] ?? null),
+                    'last_logout_at' => $this->normalizeDaemonDate($file['modified'] ?? null),
+                    'playtime' => null,
                 ];
+
+                $statsPaths[$uuid] = "$levelName/stats/$uuid.json";
             }
-        }
+
+            if ($statsPaths !== []) {
+                $statsContents = $this->fileRepository
+                    ->setServer($server)
+                    ->getContentsBatch(array_values($statsPaths), 256 * 1024);
+
+                foreach ($statsPaths as $uuid => $path) {
+                    $players[$uuid]['playtime'] = $this->extractPlaytimeSeconds($statsContents[$path] ?? null);
+                }
+            }
+
+            return $this->sortList(array_values($players));
+        });
 
         return new JsonResponse([
             'success' => true,
-            'players' => $this->sortList($players),
+            'players' => $players,
         ]);
     }
 
