@@ -11,4 +11,7 @@
 return [
     'avatar_url' => env('MINECRAFT_AVATAR_URL', 'https://minotar.net/helm/{uuid}/256.png'),
     'skin_url' => env('MINECRAFT_SKIN_URL', 'https://minotar.net/skin/{uuid}'),
+    'authme' => [
+        'table' => env('MINECRAFT_AUTHME_TABLE', 'authme'),
+    ],
 ];

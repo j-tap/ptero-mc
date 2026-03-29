@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ServerContext } from '@/state/server';
 import ServerContentBlock from '@/components/elements/ServerContentBlock';
 import Spinner from '@/components/elements/Spinner';
@@ -18,7 +18,6 @@ import {
     faExclamationTriangle,
     faInfoCircle,
     faLocationArrow,
-    faPlus,
     faSkull,
     faSkullCrossbones,
     faTag,
@@ -59,6 +58,10 @@ import OldInput from '@/components/elements/Input';
 import Tooltip from '@/components/elements/tooltip/Tooltip';
 import removeInventoryItem from './api/removeInventoryItem';
 
+type PlayerRow = OfflinePlayer & {
+    reason?: string;
+};
+
 const INVENTORY_SLOT_ORDER: number[][] = [
     [100, 101, 102, 103, 40],
     [9, 10, 11, 12, 13, 14, 15, 16, 17],
@@ -69,7 +72,28 @@ const INVENTORY_SLOT_ORDER: number[][] = [
 
 function formatItemId(id: string): string {
     const name = id.replace(/^minecraft:/, '').replace(/_/g, ' ');
-    return name.charAt(0).toUpperCase() + name.slice(1).replace(/\b\w/g, (c) => c.toUpperCase());
+    return name.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function normalizeUuid(value?: string | null): string {
+    return (value ?? '').replace(/-/g, '').toLowerCase();
+}
+
+function isSamePlayerIdentity(
+    left: { uuid?: string | null; name?: string | null },
+    right: { uuid?: string | null; name?: string | null }
+): boolean {
+    const leftUuid = normalizeUuid(left.uuid);
+    const rightUuid = normalizeUuid(right.uuid);
+
+    if (leftUuid && rightUuid) {
+        return leftUuid === rightUuid;
+    }
+
+    const leftName = (left.name ?? '').trim().toLowerCase();
+    const rightName = (right.name ?? '').trim().toLowerCase();
+
+    return leftName !== '' && leftName === rightName;
 }
 
 const ITEM_IMAGE_BASE = 'https://velithcraft.online/api/minecraft/items';
@@ -193,7 +217,9 @@ export default function PlayerManagerContainer() {
     const [isLoading, setIsLoading] = useState(false);
     const [search, setSearch] = useState('');
     const [limit, setLimit] = useState(50);
-    const [viewing, setViewing] = useState<'all' | 'opped' | 'whitelisted' | 'banned' | 'banned-ips'>('all');
+    const [successAuthOnly, setSuccessAuthOnly] = useState(true);
+    const [tableFilter, setTableFilter] = useState<'all' | 'opped' | 'whitelisted' | 'banned'>('all');
+    const [bannedIpsModalVisible, setBannedIpsModalVisible] = useState(false);
     const [player, setPlayer] = useState<Player>();
     const [playerPage, setPlayerPage] = useState<'actions' | 'stats' | 'inventory'>('actions');
     const [reason, setReason] = useState<string>('');
@@ -206,13 +232,14 @@ export default function PlayerManagerContainer() {
     const [confirmClear, setConfirmClear] = useState<Player>();
     const [confirmWipe, setConfirmWipe] = useState<Player>();
     const [confirmKill, setConfirmKill] = useState<Player>();
+    const [confirmWhitelistEnabled, setConfirmWhitelistEnabled] = useState<boolean | null>(null);
     const [newOpModalVisible, setNewOpModalVisible] = useState(false);
     const [newWhitelistModalVisible, setNewWhitelistModalVisible] = useState(false);
     const [newBanModalVisible, setNewBanModalVisible] = useState(false);
 
     useEffect(() => {
         clearFlashes();
-    }, [player, viewing]);
+    }, [player, tableFilter]);
 
     const { data: query, mutate } = useSWR(['players', 'query', uuid], () => getStatus(uuid), {
         refreshInterval: 10000,
@@ -239,23 +266,32 @@ export default function PlayerManagerContainer() {
             return new Set<string>();
         }
 
-        return new Set(query.players.list.map((nextPlayer) => nextPlayer.uuid));
+        return new Set(query.players.list.map((nextPlayer) => normalizeUuid(nextPlayer.uuid)));
     }, [query]);
 
-    const allPlayers = useMemo<OfflinePlayer[]>(() => {
-        const merged = new Map<string, OfflinePlayer>();
+    const allPlayers = useMemo<PlayerRow[]>(() => {
+        const merged = new Map<string, PlayerRow>();
 
-        (offline ?? []).forEach((nextPlayer) => {
-            merged.set(nextPlayer.uuid, nextPlayer);
+        (offline?.players ?? []).forEach((nextPlayer) => {
+            merged.set(normalizeUuid(nextPlayer.uuid), nextPlayer);
         });
 
         if (query?.online) {
             query.players.list.forEach((nextPlayer) => {
-                const existing = merged.get(nextPlayer.uuid);
-                merged.set(nextPlayer.uuid, {
+                const key = normalizeUuid(nextPlayer.uuid);
+                const existing = merged.get(key);
+                merged.set(key, {
                     ...existing,
                     ...nextPlayer,
+                    reason:
+                        query.banned.players.find((bannedPlayer) => isSamePlayerIdentity(bannedPlayer, nextPlayer))?.reason ??
+                        existing?.reason,
                     playtime: existing?.playtime ?? null,
+                    session_count: existing?.session_count ?? null,
+                    has_session: existing?.has_session ?? null,
+                    reg_ip: existing?.reg_ip ?? null,
+                    ip: existing?.ip ?? null,
+                    world: existing?.world ?? null,
                     first_seen_at: existing?.first_seen_at ?? null,
                     last_logout_at: existing?.last_logout_at ?? null,
                 });
@@ -263,12 +299,94 @@ export default function PlayerManagerContainer() {
         }
 
         return Array.from(merged.values());
-    }, [offline, query]);
+    }, [offline?.players, query]);
 
-    const filteredAllPlayers = useMemo(
-        () => allPlayers.filter((nextPlayer) => nextPlayer.name.toLowerCase().includes(search.toLowerCase())).slice(0, limit),
-        [allPlayers, limit, search]
+    const offlineWarnings = useMemo(() => offline?.warnings ?? [], [offline?.warnings]);
+
+    const filteredAllPlayers = useMemo(() => {
+        const querySearch = search.toLowerCase();
+
+        const byFilter = (nextPlayer: PlayerRow) => {
+            if (tableFilter === 'opped') {
+                return query?.opped ? query.opped.some((oppedPlayer) => isSamePlayerIdentity(oppedPlayer, nextPlayer)) : false;
+            }
+            if (tableFilter === 'whitelisted') {
+                return query?.whitelist?.list
+                    ? query.whitelist.list.some((whitelistedPlayer) => isSamePlayerIdentity(whitelistedPlayer, nextPlayer))
+                    : false;
+            }
+            if (tableFilter === 'banned') {
+                return query?.banned?.players
+                    ? query.banned.players.some((bannedPlayer) => isSamePlayerIdentity(bannedPlayer, nextPlayer))
+                    : false;
+            }
+
+            return true;
+        };
+
+        return allPlayers
+            .filter((nextPlayer) => nextPlayer.name.toLowerCase().includes(querySearch))
+            .filter(byFilter)
+            .filter((nextPlayer) => (successAuthOnly ? Boolean(nextPlayer.first_seen_at) : true))
+            .slice(0, limit);
+    }, [allPlayers, limit, query, search, successAuthOnly, tableFilter]);
+
+    const isPlayerOnline = useCallback(
+        (nextPlayer: { uuid?: string | null; name?: string | null }) =>
+            query?.online ? query.players.list.some((onlinePlayer) => isSamePlayerIdentity(onlinePlayer, nextPlayer)) : false,
+        [query]
     );
+
+    const isPlayerOpped = useCallback(
+        (nextPlayer: { uuid?: string | null; name?: string | null }) =>
+            query?.opped ? query.opped.some((oppedPlayer) => isSamePlayerIdentity(oppedPlayer, nextPlayer)) : false,
+        [query]
+    );
+
+    const isPlayerWhitelisted = useCallback(
+        (nextPlayer: { uuid?: string | null; name?: string | null }) =>
+            query?.whitelist?.list
+                ? query.whitelist.list.some((whitelistedPlayer) => isSamePlayerIdentity(whitelistedPlayer, nextPlayer))
+                : false,
+        [query]
+    );
+
+    const isPlayerBanned = useCallback(
+        (nextPlayer: { uuid?: string | null; name?: string | null }) =>
+            query?.banned?.players
+                ? query.banned.players.some((bannedPlayer) => isSamePlayerIdentity(bannedPlayer, nextPlayer))
+                : false,
+        [query]
+    );
+
+    const selectedPlayerIsOnline = useMemo(() => (player ? isPlayerOnline(player) : false), [isPlayerOnline, player]);
+
+    const applyWhitelistEnabled = (nextEnabled: boolean) => {
+        if (!query) {
+            return;
+        }
+
+        setIsLoading(true);
+
+        setWhitelistEnabled(uuid, nextEnabled)
+            .then(() =>
+                mutate(
+                    {
+                        ...query,
+                        whitelist: {
+                            ...query.whitelist,
+                            enabled: nextEnabled,
+                        },
+                    },
+                    false
+                )
+            )
+            .catch((error) => {
+                console.error(error);
+                clearAndAddHttpError({ error, key: 'players:view' });
+            })
+            .finally(() => setIsLoading(false));
+    };
 
     if (!query) {
         return (
@@ -280,6 +398,24 @@ export default function PlayerManagerContainer() {
 
     return (
         <ServerContentBlock title={'Players'}>
+            <Dialog.Confirm
+                open={confirmWhitelistEnabled !== null}
+                onClose={() => setConfirmWhitelistEnabled(null)}
+                onConfirmed={() => {
+                    if (isLoading || confirmWhitelistEnabled === null) return;
+
+                    applyWhitelistEnabled(confirmWhitelistEnabled);
+                    setConfirmWhitelistEnabled(null);
+                }}
+                confirm={'Confirm'}
+            >
+                <Banner title={'Warning'} className={'bg-red-600 mt-10'} icon={<FontAwesomeIcon icon={faExclamationTriangle} />}>
+                    Enabling whitelist means only players present in the whitelist will be able to join the server.
+                </Banner>
+                <p className={'mt-2'}>
+                    Are you sure you want to enable whitelist on this server now?
+                </p>
+            </Dialog.Confirm>
             <Dialog.Confirm
                 open={Boolean(confirmOp)}
                 onClose={() => {
@@ -319,7 +455,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmOp.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmOp.uuid)
+                                    {isPlayerOnline(confirmOp)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -379,7 +515,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmBan.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmBan.uuid)
+                                    {isPlayerOnline(confirmBan)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -446,7 +582,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmKick.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmKick.uuid)
+                                    {isPlayerOnline(confirmKick)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -503,7 +639,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmClear.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmClear.uuid)
+                                    {isPlayerOnline(confirmClear)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -554,7 +690,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmWipe.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmWipe.uuid)
+                                    {isPlayerOnline(confirmWipe)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -607,7 +743,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmIpBan.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmIpBan.uuid)
+                                    {isPlayerOnline(confirmIpBan)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -665,7 +801,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmKill.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
-                                    {query.online && query.players.list.find((p) => p.uuid === confirmKill.uuid)
+                                    {isPlayerOnline(confirmKill)
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -694,7 +830,7 @@ export default function PlayerManagerContainer() {
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <span className={'flex items-center gap-2 flex-wrap'}>
                                     <h1 className={'text-lg'}>{player.name}</h1>
-                                    {query?.opped?.some((p) => p.uuid === player.uuid) && (
+                                    {isPlayerOpped(player) && (
                                         <span
                                             className={
                                                 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/40'
@@ -708,12 +844,12 @@ export default function PlayerManagerContainer() {
                                 </span>
                                 <p
                                     className={
-                                        query?.online && query.players.list.find((p) => p.uuid === player.uuid)
+                                        selectedPlayerIsOnline
                                             ? '-mt-2 text-sm text-green-500 font-medium'
                                             : '-mt-2 text-sm text-neutral-400'
                                     }
                                 >
-                                    {query?.online && query.players.list.find((p) => p.uuid === player.uuid)
+                                    {selectedPlayerIsOnline
                                         ? 'Online'
                                         : 'Offline'}
                                 </p>
@@ -759,7 +895,7 @@ export default function PlayerManagerContainer() {
                                             Power actions
                                         </h2>
                                         <div className={'grid grid-cols-2 w-full gap-2'}>
-                                            {query.whitelist.list.some((p) => p.uuid === player.uuid) ? (
+                                            {isPlayerWhitelisted(player) ? (
                                                 <Button.Danger
                                                     className={'w-full'}
                                                     disabled={isLoading}
@@ -820,7 +956,7 @@ export default function PlayerManagerContainer() {
                                                     Whitelist
                                                 </Button.Text>
                                             )}
-                                            {query.opped.some((p) => p.uuid === player.uuid) ? (
+                                            {isPlayerOpped(player) ? (
                                                 <Button.Danger
                                                     className={'w-full'}
                                                     disabled={isLoading}
@@ -860,7 +996,7 @@ export default function PlayerManagerContainer() {
                                                     Op player
                                                 </Button.Text>
                                             )}
-                                            {query.banned.players.some((p) => p.uuid === player.uuid) ? (
+                                            {isPlayerBanned(player) ? (
                                                 <Button.Text
                                                     className={'w-full'}
                                                     disabled={isLoading}
@@ -916,9 +1052,7 @@ export default function PlayerManagerContainer() {
                                             <Button.Danger
                                                 className={'w-full'}
                                                 disabled={
-                                                    isLoading ||
-                                                    !query.online ||
-                                                    !query.players.list.some((p) => p.uuid === player.uuid)
+                                                    isLoading || !selectedPlayerIsOnline
                                                 }
                                                 onClick={() => {
                                                     setConfirmKick(player);
@@ -930,9 +1064,7 @@ export default function PlayerManagerContainer() {
                                             <Button.Danger
                                                 className={'w-full'}
                                                 disabled={
-                                                    isLoading ||
-                                                    !query.online ||
-                                                    !query.players.list.some((p) => p.uuid === player.uuid)
+                                                    isLoading || !selectedPlayerIsOnline
                                                 }
                                                 onClick={() => {
                                                     setConfirmClear(player);
@@ -944,9 +1076,7 @@ export default function PlayerManagerContainer() {
                                             <Button.Danger
                                                 className={'w-full'}
                                                 disabled={
-                                                    isLoading ||
-                                                    !query.online ||
-                                                    !query.players.list.some((p) => p.uuid === player.uuid)
+                                                    isLoading || !selectedPlayerIsOnline
                                                 }
                                                 onClick={() => {
                                                     setConfirmIpBan(player);
@@ -958,9 +1088,7 @@ export default function PlayerManagerContainer() {
                                             <Button.Danger
                                                 className={'w-full'}
                                                 disabled={
-                                                    isLoading ||
-                                                    !query.online ||
-                                                    !query.players.list.some((p) => p.uuid === player.uuid)
+                                                    isLoading || !selectedPlayerIsOnline
                                                 }
                                                 onClick={() => {
                                                     setConfirmKill(player);
@@ -1013,7 +1141,7 @@ export default function PlayerManagerContainer() {
                                             {stats.position?.y != null ? Math.floor(stats.position.y) : '?'}{' '}
                                             {stats.position?.z != null ? Math.floor(stats.position.z) : '?'}
                                         </code>
-                                        {query?.online && query.players.list.some((p) => p.uuid === player.uuid) && (
+                                        {selectedPlayerIsOnline && (
                                             <div className={'flex flex-nowrap items-end gap-2 mb-3'}>
                                                 <Input.Text
                                                     type={'number'}
@@ -1073,7 +1201,7 @@ export default function PlayerManagerContainer() {
                                                 >
                                                     {stats.gamemode ?? 'unknown'}
                                                 </code>
-                                                {query?.online && query.players.list.some((p) => p.uuid === player.uuid) && (
+                                                {selectedPlayerIsOnline && (
                                                     <div className={'flex items-center gap-2 mt-1'}>
                                                         <Select
                                                             id={'stats-gamemode'}
@@ -1170,7 +1298,7 @@ export default function PlayerManagerContainer() {
                                                 >
                                                     {stats.xp_level ?? 0} ({stats.xp_total ?? 0} XP)
                                                 </code>
-                                                {query?.online && query.players.list.some((p) => p.uuid === player.uuid) && (
+                                                {selectedPlayerIsOnline && (
                                                     <div className={'flex items-center gap-2 mt-1'}>
                                                         <Input.Text
                                                             type={'number'}
@@ -1258,7 +1386,7 @@ export default function PlayerManagerContainer() {
                 )}
             </Dialog>
 
-            <Dialog open={viewing === 'banned-ips'} onClose={() => setViewing('banned')} title={'Banned IPs'}>
+            <Dialog open={bannedIpsModalVisible} onClose={() => setBannedIpsModalVisible(false)} title={'Banned IPs'}>
                 <Banner title={'Information'} className={'bg-blue-600'} icon={<FontAwesomeIcon icon={faInfoCircle} />}>
                     IP addresses listed here are banned from connecting to this server. Removing IP addresses from this
                     list will restore their access.
@@ -1346,7 +1474,7 @@ export default function PlayerManagerContainer() {
                 </div>
 
                 <Dialog.Footer>
-                    <Button.Text onClick={() => setViewing('banned')}>Back</Button.Text>
+                    <Button.Text onClick={() => setBannedIpsModalVisible(false)}>Back</Button.Text>
                 </Dialog.Footer>
             </Dialog>
 
@@ -1497,32 +1625,23 @@ export default function PlayerManagerContainer() {
             <div className={'flex flex-col w-full'}>
                 {!query.is_proxy ? (
                     <>
-                        <div
-                            className={
-                                'mb-4 flex flex-col md:flex-row md:justify-between justify-center md:items-center content-between w-full'
-                            }
-                        >
+                        <div className={'mb-4 flex flex-col md:flex-row md:justify-between md:items-center gap-3 w-full'}>
                             <h1 className={'text-2xl'}>Player management</h1>
-                            <div className={'flex flex-row'}>
-                                <Button.Text disabled={viewing === 'all'} onClick={() => setViewing('all')}>
-                                    Players
-                                </Button.Text>
-                                <Button.Text disabled={viewing === 'opped'} onClick={() => setViewing('opped')} className={'ml-2'}>
-                                    Opped
-                                </Button.Text>
+                            <div className={'flex flex-wrap gap-2'}>
+                                <Button.Text onClick={() => setBannedIpsModalVisible(true)}>View Banned IPs</Button.Text>
                                 <Button.Text
-                                    disabled={viewing === 'whitelisted'}
-                                    onClick={() => setViewing('whitelisted')}
-                                    className={'ml-2'}
+                                    disabled={isLoading}
+                                    onClick={() => {
+                                        const nextEnabled = !query.whitelist.enabled;
+                                        if (nextEnabled) {
+                                            setConfirmWhitelistEnabled(true);
+                                            return;
+                                        }
+
+                                        applyWhitelistEnabled(false);
+                                    }}
                                 >
-                                    Whitelisted
-                                </Button.Text>
-                                <Button.Text
-                                    disabled={viewing === 'banned'}
-                                    onClick={() => setViewing('banned')}
-                                    className={'ml-2'}
-                                >
-                                    Banned
+                                    {query.whitelist.enabled ? 'Disable whitelist' : 'Enable whitelist'}
                                 </Button.Text>
                             </div>
                         </div>
@@ -1531,164 +1650,74 @@ export default function PlayerManagerContainer() {
                             Online players: {query.online ? query.players.online : 0}
                         </p>
 
-                        {viewing === 'all' ? (
-                            <Banner title={'All players'} className={'bg-gray-700'} icon={<FontAwesomeIcon icon={faUserPlus} />}>
-                                &nbsp;
-                            </Banner>
-                        ) : viewing === 'opped' ? (
-                            <Banner
-                                title={'Operators'}
-                                className={'bg-gray-700'}
-                                icon={<FontAwesomeIcon icon={faUserPlus} />}
-                            >
-                                Operators are able to run any command in the server which allows them to do actions such
-                                as moderating players (kicking, banning), granting other players operator permissions,
-                                switching game mods, use command blocks and other dangerous actions. Only give this
-                                permission to players you trust!
-                            </Banner>
-                        ) : viewing === 'whitelisted' ? (
-                            <Banner
-                                title={'Whitelist'}
-                                className={'bg-gray-700'}
-                                icon={<FontAwesomeIcon icon={faUserCheck} />}
-                                extra={
-                                    <Button.Text
-                                        className={'mt-2 w-fit'}
-                                        disabled={isLoading}
-                                        onClick={() => {
-                                            setIsLoading(true);
-
-                                            setWhitelistEnabled(uuid, !query.whitelist.enabled)
-                                                .then(() =>
-                                                    mutate(
-                                                        {
-                                                            ...query,
-                                                            whitelist: {
-                                                                ...query.whitelist,
-                                                                enabled: !query.whitelist.enabled,
-                                                            },
-                                                        },
-                                                        false
-                                                    )
-                                                )
-                                                .catch((error) => {
-                                                    console.error(error);
-                                                    clearAndAddHttpError({ error, key: 'players:view' });
-                                                })
-                                                .finally(() => setIsLoading(false));
-                                        }}
-                                    >
-                                        {query.whitelist.enabled ? 'Disable whitelist' : 'Enable whitelist'}
-                                    </Button.Text>
-                                }
-                            >
-                                When whitelist is enabled on your server, only players added to the whitelist will be
-                                able to join. Enabling the whitelist is highly recommended if this is not a public
-                                server.
-                            </Banner>
-                        ) : (
-                            <Banner
-                                title={'Banned players/IPs'}
-                                className={'bg-gray-700'}
-                                icon={<FontAwesomeIcon icon={faBan} />}
-                                extra={
-                                    <Button.Text className={'mt-2 w-fit'} onClick={() => setViewing('banned-ips')}>
-                                        View Banned IPs
-                                    </Button.Text>
-                                }
-                            >
-                                By banning players, you revoke their access to connect to the server. Banned player&apos;s
-                                inventory and statistics remain the same and will not be removed. Removing players from the
-                                ban list will restore their ability to connect to the server. Banning IPs provides the
-                                same functionality as banning players, except it applies to all connections from the
-                                specified IP address and has no relationship with the players coming from that address.
-                            </Banner>
-                        )}
-
                         <div className={'mt-2 w-full flex flex-col gap-3'}>
-                            {viewing === 'all' ? (
-                                <>
-                                    {!!allPlayers.length && (
-                                        <div className={'grid grid-cols-4 gap-2 items-center justify-between'}>
-                                            <OldInput
-                                                placeholder={'Search players...'}
-                                                value={search}
-                                                onChange={(e) => setSearch(e.target.value)}
-                                                className={'w-full col-span-3'}
-                                            />
-
-                                            <Select
-                                                value={limit}
-                                                onChange={(e) => setLimit(Number(e.target.value))}
-                                                className={'col-span-1'}
-                                            >
-                                                <option value={10}>10 players</option>
-                                                <option value={25}>25 players</option>
-                                                <option value={50}>50 players</option>
-                                                <option value={100}>100 players</option>
-                                                <option value={250}>250 players</option>
-                                            </Select>
-                                        </div>
-                                    )}
-                                    <PlayerTable
-                                        players={filteredAllPlayers}
-                                        emptyMessage={'No players are currently available.'}
-                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
-                                        isOnline={(nextPlayer) => onlinePlayerUuids.has(nextPlayer.uuid)}
-                                        isOp={(nextPlayer) => query.opped.some((p) => p.uuid === nextPlayer.uuid)}
-                                        defaultSortKey={'status'}
-                                        defaultSortDirection={'desc'}
-                                    />
-                                </>
-                            ) : viewing === 'opped' ? (
-                                <>
-                                    <div className={'flex justify-end'}>
-                                        <Button.Text onClick={() => setNewOpModalVisible(true)}>
-                                            <FontAwesomeIcon icon={faPlus} className={'mr-2'} />
-                                            Add Operator
-                                        </Button.Text>
-                                    </div>
-                                    <PlayerTable
-                                        players={query.opped}
-                                        emptyMessage={'No operators found.'}
-                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
-                                        isOnline={(nextPlayer) => query.online && query.players.list.some((p) => p.uuid === nextPlayer.uuid)}
-                                        isOp={() => true}
-                                    />
-                                </>
-                            ) : viewing === 'whitelisted' ? (
-                                <>
-                                    <div className={'flex justify-end'}>
-                                        <Button.Text onClick={() => setNewWhitelistModalVisible(true)}>
-                                            <FontAwesomeIcon icon={faPlus} className={'mr-2'} />
-                                            Add to Whitelist
-                                        </Button.Text>
-                                    </div>
-                                    <PlayerTable
-                                        players={query.whitelist.list}
-                                        emptyMessage={'No whitelisted players found.'}
-                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
-                                        isOnline={(nextPlayer) => query.online && query.players.list.some((p) => p.uuid === nextPlayer.uuid)}
-                                        isOp={(nextPlayer) => query.opped.some((p) => p.uuid === nextPlayer.uuid)}
-                                    />
-                                </>
-                            ) : (
-                                <>
-                                    <div className={'flex justify-end'}>
-                                        <Button.Text onClick={() => setNewBanModalVisible(true)}>
-                                            <FontAwesomeIcon icon={faPlus} className={'mr-2'} />
-                                            Add Ban
-                                        </Button.Text>
-                                    </div>
-                                    <PlayerTable
-                                        players={query.banned.players}
-                                        emptyMessage={'No banned players found.'}
-                                        onOpen={(nextPlayer) => setPlayer(nextPlayer)}
-                                        isOp={(nextPlayer) => query.opped.some((p) => p.uuid === nextPlayer.uuid)}
-                                        showReason
-                                    />
-                                </>
+                            {offlineWarnings.length > 0 && (
+                                <Banner
+                                    title={'Warning'}
+                                    className={'bg-amber-600'}
+                                    icon={<FontAwesomeIcon icon={faExclamationTriangle} />}
+                                >
+                                    {offlineWarnings.join(' ')}
+                                </Banner>
                             )}
+
+                            {!!allPlayers.length && (
+                                <div className={'grid grid-cols-7 gap-2 items-center justify-between'}>
+                                    <OldInput
+                                        placeholder={'Search players...'}
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        className={'w-full col-span-3'}
+                                    />
+
+                                    <Select
+                                        value={tableFilter}
+                                        onChange={(e) => setTableFilter(e.target.value as 'all' | 'opped' | 'whitelisted' | 'banned')}
+                                        className={'col-span-1'}
+                                    >
+                                        <option value={'all'}>All</option>
+                                        <option value={'opped'}>Only OP</option>
+                                        <option value={'whitelisted'}>Only Whitelisted</option>
+                                        <option value={'banned'}>Only Banned</option>
+                                    </Select>
+
+                                    <Select
+                                        value={limit}
+                                        onChange={(e) => setLimit(Number(e.target.value))}
+                                        className={'col-span-1'}
+                                    >
+                                        <option value={10}>10 players</option>
+                                        <option value={25}>25 players</option>
+                                        <option value={50}>50 players</option>
+                                        <option value={100}>100 players</option>
+                                        <option value={250}>250 players</option>
+                                    </Select>
+                                    <label
+                                        className={
+                                            'col-span-2 flex items-center justify-end gap-2 text-xs text-neutral-300 whitespace-nowrap'
+                                        }
+                                    >
+                                        <input
+                                            type={'checkbox'}
+                                            checked={successAuthOnly}
+                                            onChange={(e) => setSuccessAuthOnly(e.currentTarget.checked)}
+                                        />
+                                        Success auth
+                                    </label>
+                                </div>
+                            )}
+                            <PlayerTable
+                                players={filteredAllPlayers}
+                                emptyMessage={'No players are currently available.'}
+                                onOpen={(nextPlayer) => setPlayer(nextPlayer)}
+                                isOnline={(nextPlayer) => onlinePlayerUuids.has(normalizeUuid(nextPlayer.uuid))}
+                                isOp={isPlayerOpped}
+                                isWhitelisted={isPlayerWhitelisted}
+                                isBanned={isPlayerBanned}
+                                showReason
+                                defaultSortKey={'status'}
+                                defaultSortDirection={'desc'}
+                            />
                         </div>
                     </>
                 ) : (

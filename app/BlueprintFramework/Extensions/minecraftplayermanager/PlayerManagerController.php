@@ -35,6 +35,7 @@ class PlayerManagerController extends ClientApiController
         private DaemonCommandRepository $commandRepository,
         private PlayerManagerUtilities $utils,
         private PlayerManagerUserCache $cache,
+        private AuthmePlayerDataService $authmePlayerDataService,
     ) {
         parent::__construct();
     }
@@ -176,6 +177,30 @@ class PlayerManagerController extends ClientApiController
         }
 
         return (int) floor($ticks / 20);
+    }
+
+    private function extractSessionCount(?string $statsRaw): ?int
+    {
+        if (!is_string($statsRaw) || trim($statsRaw) === '') {
+            return null;
+        }
+
+        $stats = json_decode($statsRaw, true);
+        if (!is_array($stats)) {
+            return null;
+        }
+
+        $leaveGameCount = $stats['stats']['minecraft:custom']['minecraft:leave_game'] ?? null;
+        if (!is_numeric($leaveGameCount)) {
+            return null;
+        }
+
+        $sessions = (int) $leaveGameCount;
+        if ($sessions < 0) {
+            return null;
+        }
+
+        return $sessions;
     }
 
     public function index(PlayerManagerGetRequest $request, Server $server): array
@@ -372,9 +397,14 @@ class PlayerManagerController extends ClientApiController
                     'uuid' => $uuid,
                     'name' => $name,
                     'avatar' => $this->avatarUrl($uuid),
-                    'first_seen_at' => $this->normalizeDaemonDate($file['created'] ?? null),
+                    'first_seen_at' => null,
                     'last_logout_at' => $this->normalizeDaemonDate($file['modified'] ?? null),
                     'playtime' => null,
+                    'session_count' => null,
+                    'has_session' => null,
+                    'reg_ip' => null,
+                    'ip' => null,
+                    'world' => null,
                 ];
 
                 $statsPaths[$uuid] = "$levelName/stats/$uuid.json";
@@ -386,16 +416,41 @@ class PlayerManagerController extends ClientApiController
                     ->getContentsBatch(array_values($statsPaths), 256 * 1024);
 
                 foreach ($statsPaths as $uuid => $path) {
-                    $players[$uuid]['playtime'] = $this->extractPlaytimeSeconds($statsContents[$path] ?? null);
+                    $statsRaw = $statsContents[$path] ?? null;
+                    $players[$uuid]['playtime'] = $this->extractPlaytimeSeconds($statsRaw);
+                    $players[$uuid]['session_count'] = $this->extractSessionCount($statsRaw);
                 }
             }
 
-            return $this->sortList(array_values($players));
+            $authmeData = $this->authmePlayerDataService->load(
+                $server,
+                array_map(fn (array $player) => $player['name'], array_values($players))
+            );
+
+            foreach ($players as $uuid => $player) {
+                $nameKey = strtolower(trim((string) ($player['name'] ?? '')));
+                $authmePlayer = $authmeData['players'][$nameKey] ?? null;
+                if (!$authmePlayer) {
+                    continue;
+                }
+
+                $players[$uuid]['first_seen_at'] = $authmePlayer['first_seen_at'] ?? null;
+                $players[$uuid]['has_session'] = $authmePlayer['has_session'] ?? null;
+                $players[$uuid]['reg_ip'] = $authmePlayer['reg_ip'] ?? null;
+                $players[$uuid]['ip'] = $authmePlayer['ip'] ?? null;
+                $players[$uuid]['world'] = $authmePlayer['world'] ?? null;
+            }
+
+            return [
+                'players' => $this->sortList(array_values($players)),
+                'warnings' => $authmeData['warnings'] ?? [],
+            ];
         });
 
         return new JsonResponse([
             'success' => true,
-            'players' => $players,
+            'players' => $players['players'] ?? [],
+            'warnings' => $players['warnings'] ?? [],
         ]);
     }
 
