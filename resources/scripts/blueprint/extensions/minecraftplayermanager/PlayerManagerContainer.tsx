@@ -57,6 +57,7 @@ import getOffline, { type OfflinePlayer } from './api/getOffline';
 import Select from '@/components/elements/Select';
 import OldInput from '@/components/elements/Input';
 import Tooltip from '@/components/elements/tooltip/Tooltip';
+import removeInventoryItem from './api/removeInventoryItem';
 
 const INVENTORY_SLOT_ORDER: number[][] = [
     [100, 101, 102, 103, 40],
@@ -86,7 +87,15 @@ const SLOT_LABELS: Record<number, string> = {
     40: 'Offhand',
 };
 
-function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
+function PlayerInventoryGrid({
+    items,
+    isLoading,
+    onRemoveItem,
+}: {
+    items: InventoryItem[];
+    isLoading: boolean;
+    onRemoveItem: (item: InventoryItem) => Promise<void>;
+}) {
     const bySlot = new Map<number, InventoryItem>();
     items.forEach((item) => bySlot.set(item.slot, item));
 
@@ -104,8 +113,8 @@ function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
                             row.length === 5
                                 ? 'grid grid-cols-5 gap-1 w-fit'
                                 : row.length === 10
-                                  ? 'grid grid-cols-10 gap-1 w-fit'
-                                  : 'grid grid-cols-9 gap-1 w-fit'
+                                    ? 'grid grid-cols-10 gap-1 w-fit'
+                                    : 'grid grid-cols-9 gap-1 w-fit'
                         }
                     >
                         {row.map((slot) => {
@@ -118,8 +127,8 @@ function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
                             const tooltipContent = item
                                 ? `${label}${count > 1 ? ` ×${count}` : ''}${slotLabel ? ` (${slotLabel})` : ''}`
                                 : slotLabel
-                                  ? `Slot ${slot} (${slotLabel})`
-                                  : `Slot ${slot}`;
+                                    ? `Slot ${slot} (${slotLabel})`
+                                    : `Slot ${slot}`;
                             return (
                                 <Tooltip key={slot} content={tooltipContent} placement={'top'}>
                                     <div
@@ -129,6 +138,25 @@ function PlayerInventoryGrid({ items }: { items: InventoryItem[] }) {
                                     >
                                         {item ? (
                                             <>
+                                                <button
+                                                    type={'button'}
+                                                    className={
+                                                        'flex absolute top-0.5 right-0.5 text-red-400 hover:text-red-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+                                                    }
+                                                    disabled={isLoading}
+                                                    onClick={(event) => {
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+                                                        void onRemoveItem(item);
+                                                    }}
+                                                    onMouseDown={(event) => {
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+                                                    }}
+                                                    title={'Delete item permanently'}
+                                                >
+                                                    <FontAwesomeIcon icon={faTrash} className={'text-[10px]'} />
+                                                </button>
                                                 <img
                                                     src={itemIconUrl(item.id)}
                                                     alt={label}
@@ -947,7 +975,29 @@ export default function PlayerManagerContainer() {
                                     !inventoryItems ? (
                                         <Spinner size={'large'} centered />
                                     ) : (
-                                        <PlayerInventoryGrid items={inventoryItems} />
+                                        <PlayerInventoryGrid
+                                            items={inventoryItems}
+                                            isLoading={isLoading}
+                                            onRemoveItem={async (item) => {
+                                                if (!player || isLoading) return;
+
+                                                const confirmed = window.confirm(
+                                                    `Delete item from slot ${item.slot}? This action cannot be undone.`
+                                                );
+                                                if (!confirmed) return;
+
+                                                setIsLoading(true);
+                                                try {
+                                                    await removeInventoryItem(uuid, player.uuid, item.slot);
+                                                    await mutateGlobal(['players', 'inventory', uuid, player.uuid]);
+                                                } catch (error) {
+                                                    console.error(error);
+                                                    clearAndAddHttpError({ error, key: 'players:view' });
+                                                } finally {
+                                                    setIsLoading(false);
+                                                }
+                                            }}
+                                        />
                                     )
                                 ) : !stats ? (
                                     <Spinner size={'large'} centered />
@@ -1457,7 +1507,7 @@ export default function PlayerManagerContainer() {
                                 <Button.Text disabled={viewing === 'all'} onClick={() => setViewing('all')}>
                                     Players
                                 </Button.Text>
-                                <Button.Text disabled={viewing === 'opped'} onClick={() => setViewing('opped')}>
+                                <Button.Text disabled={viewing === 'opped'} onClick={() => setViewing('opped')} className={'ml-2'}>
                                     Opped
                                 </Button.Text>
                                 <Button.Text
@@ -1483,7 +1533,7 @@ export default function PlayerManagerContainer() {
 
                         {viewing === 'all' ? (
                             <Banner title={'All players'} className={'bg-gray-700'} icon={<FontAwesomeIcon icon={faUserPlus} />}>
-                                Unified player list. Online players are highlighted in green and sorted first by default.
+                                &nbsp;
                             </Banner>
                         ) : viewing === 'opped' ? (
                             <Banner

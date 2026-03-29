@@ -26,6 +26,7 @@ use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\Pl
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetGamemodeRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetLevelRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetPositionRequest;
+use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerInventorySlotRequest;
 
 class PlayerManagerController extends ClientApiController
 {
@@ -1409,6 +1410,40 @@ class PlayerManagerController extends ClientApiController
         return null;
     }
 
+    private function normalizeInventorySlot(?int $slot): ?int
+    {
+        if (!is_int($slot)) {
+            return null;
+        }
+
+        if ($slot < 0) {
+            $slot += 256;
+        }
+
+        if ($slot === 150) {
+            return 40;
+        }
+
+        return $slot;
+    }
+
+    private function resolveLevelName(Server $server): ?string
+    {
+        $properties = $this->utils->configs($server)['server.properties'];
+        if (!$properties) {
+            return null;
+        }
+
+        $data = explode("\n", $properties);
+        foreach ($data as $line) {
+            if (str_starts_with($line, 'level-name=')) {
+                return explode('=', $line, 2)[1] ?? null;
+            }
+        }
+
+        return null;
+    }
+
     public function setGamemode(PlayerManagerSetGamemodeRequest $request, Server $server): JsonResponse
     {
         if ($this->utils->isProxy($server)) {
@@ -1928,6 +1963,119 @@ class PlayerManagerController extends ClientApiController
                 'error' => 'Failed to read player inventory',
                 'inventory' => [],
             ], 200);
+        }
+    }
+
+    public function removeInventoryItem(PlayerManagerInventorySlotRequest $request, Server $server): JsonResponse
+    {
+        if ($this->utils->isProxy($server)) {
+            return new JsonResponse([
+                'success' => false,
+                'error' => 'Cannot modify inventory on a proxy server',
+            ], 400);
+        }
+
+        $uuid = $this->utils->formatUuid($request->input('uuid'));
+        $slot = $this->normalizeInventorySlot((int) $request->input('slot'));
+        if ($slot === null) {
+            return new JsonResponse([
+                'success' => false,
+                'error' => 'Invalid inventory slot',
+            ], 422);
+        }
+
+        $levelName = $this->resolveLevelName($server);
+        if (!$levelName) {
+            return new JsonResponse([
+                'success' => false,
+                'error' => 'Failed to find level name',
+            ], 400);
+        }
+
+        try {
+            $path = "$levelName/playerdata/$uuid.dat";
+            $playerData = $this->fileRepository->setServer($server)->getContent($path);
+            $decoded = zlib_decode($playerData);
+            if (!is_string($decoded)) {
+                return new JsonResponse([
+                    'success' => false,
+                    'error' => 'Failed to decode player data',
+                ], 500);
+            }
+
+            $nbt = new Service(new DataHandler());
+            $tree = $nbt->readString($decoded);
+            if (!$tree) {
+                return new JsonResponse([
+                    'success' => false,
+                    'error' => 'Failed to parse player data',
+                ], 500);
+            }
+
+            $removed = 0;
+            $inventoryNode = $tree->findChildByName('Inventory') ?: $tree->findChildByName('inventory');
+            if ($inventoryNode && !$inventoryNode->isLeaf()) {
+                foreach ($inventoryNode->getChildren() as $itemNode) {
+                    $slotNode = $itemNode->findChildByName('Slot') ?: $itemNode->findChildByName('slot');
+                    if ($slotNode === false) {
+                        continue;
+                    }
+
+                    $itemSlot = $this->normalizeInventorySlot(is_numeric($slotNode->getValue()) ? (int) $slotNode->getValue() : null);
+                    if ($itemSlot !== $slot) {
+                        continue;
+                    }
+
+                    $inventoryNode->removeChild($itemNode);
+                    ++$removed;
+                }
+            }
+
+            if ($slot === 40 && !$tree->isLeaf()) {
+                foreach ($tree->getChildren() as $child) {
+                    $name = $child->getName();
+                    if ($name === 'Offhand' || $name === 'offhand') {
+                        $tree->removeChild($child);
+                        ++$removed;
+                    }
+                }
+            }
+
+            if ($removed === 0) {
+                return new JsonResponse([
+                    'success' => false,
+                    'error' => 'Item not found in requested slot',
+                ], 404);
+            }
+
+            $written = zlib_encode($nbt->writeString($tree), ZLIB_ENCODING_GZIP);
+            if (!is_string($written)) {
+                return new JsonResponse([
+                    'success' => false,
+                    'error' => 'Failed to encode player data',
+                ], 500);
+            }
+
+            $this->fileRepository->setServer($server)->putContent($path, $written);
+
+            Activity::event('server:player.inventory.remove')
+                ->property([
+                    'uuid' => $uuid,
+                    'slot' => $slot,
+                    'removed_count' => $removed,
+                ])
+                ->log();
+
+            return new JsonResponse([
+                'success' => true,
+                'slot' => $slot,
+                'removed' => $removed,
+            ]);
+        } catch (\Throwable $e) {
+            return new JsonResponse([
+                'success' => false,
+                'error' => 'Failed to modify player inventory',
+            ], 500);
         }
     }
 }

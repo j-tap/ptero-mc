@@ -20,6 +20,7 @@ Route::group([
 	Route::get('/offline', [minecraftplayermanager\PlayerManagerController::class, 'offline']);
 	Route::get('/stats/{uuid}', [minecraftplayermanager\PlayerManagerController::class, 'stats']);
 	Route::get('/inventory/{uuid}', [minecraftplayermanager\PlayerManagerController::class, 'inventory']);
+	Route::delete('/inventory', [minecraftplayermanager\PlayerManagerController::class, 'removeInventoryItem']);
 
 	Route::post('/whitelist/status', [minecraftplayermanager\PlayerManagerController::class, 'setwhitelist']);
 	Route::put('/whitelist', [minecraftplayermanager\PlayerManagerController::class, 'addwhitelist']);
