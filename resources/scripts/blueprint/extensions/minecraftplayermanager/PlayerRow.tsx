@@ -19,7 +19,7 @@ export default function PlayerRow({ player, onOpen, extra, isOp }: Props) {
             onClick={onOpen}
         >
             <div className={'flex flex-row items-center'}>
-                <img src={player.avatar} alt={player.name} className={'w-12 h-12 rounded-md'} />
+                <img src={player.avatar} alt={player.name} className={'mc-avatar-pixelated w-12 h-12 rounded-md'} />
                 <span className={'ml-4 text-lg flex flex-col justify-center'}>
                     <span className={'flex items-center gap-2 flex-wrap'}>
                         <h1 className={'text-lg'}>{player.name}</h1>

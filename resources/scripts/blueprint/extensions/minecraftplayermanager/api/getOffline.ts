@@ -11,6 +11,7 @@ export type OfflinePlayer = Player & {
     world?: string | null;
     first_seen_at?: string | null;
     last_logout_at?: string | null;
+    licensed?: boolean | null;
 };
 
 export type OfflineResponse = {

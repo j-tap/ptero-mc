@@ -91,6 +91,41 @@ class PlayerManagerUtilities
         return substr($uuid, 0, 8) . '-' . substr($uuid, 8, 4) . '-' . substr($uuid, 12, 4) . '-' . substr($uuid, 16, 4) . '-' . substr($uuid, 20);
     }
 
+    /**
+     * Minecraft offline (cracked) accounts use UUID v3; Mojang accounts typically use v4.
+     * Query/ping does not expose license status — this is a best-effort signal when no DB row exists.
+     */
+    public function inferLicensedFromMinecraftUuid(?string $uuid): ?bool
+    {
+        if (!is_string($uuid) || trim($uuid) === '') {
+            return null;
+        }
+
+        $uuid = trim($uuid);
+        if (preg_match(
+            '/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-([0-9a-fA-F])[0-9a-fA-F]{3}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/',
+            $uuid,
+            $matches
+        )) {
+            $version = hexdec($matches[1]);
+        } else {
+            $compact = preg_replace('/[^0-9a-fA-F]/', '', $uuid);
+            if (strlen($compact) !== 32) {
+                return null;
+            }
+            $version = hexdec($compact[12]);
+        }
+
+        if ($version === 3) {
+            return false;
+        }
+        if ($version === 4) {
+            return true;
+        }
+
+        return null;
+    }
+
     public function getFloodgatePrefix(Server $server): string|null {
         $floodgate = $this->configs($server)['plugins/floodgate/config.yml'];
 

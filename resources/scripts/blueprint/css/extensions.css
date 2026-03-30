@@ -4,3 +4,8 @@
 
   Learn more at https://blueprint.zip
 */
+
+.mc-avatar-pixelated {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}

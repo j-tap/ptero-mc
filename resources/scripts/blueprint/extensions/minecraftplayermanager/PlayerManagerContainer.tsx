@@ -47,7 +47,7 @@ import banip from './api/banip';
 import banipPlayer from './api/banipPlayer';
 import kill from './api/kill';
 import getStats from './api/getStats';
-import getInventory, { type InventoryItem } from './api/getInventory';
+import getInventory, { type InventoryFetchResult, type InventoryItem } from './api/getInventory';
 import setGamemode, { type Gamemode } from './api/setGamemode';
 import setLevel from './api/setLevel';
 import setPosition from './api/setPosition';
@@ -87,7 +87,16 @@ function isSamePlayerIdentity(
     const rightUuid = normalizeUuid(right.uuid);
 
     if (leftUuid && rightUuid) {
-        return leftUuid === rightUuid;
+        if (leftUuid === rightUuid) {
+            return true;
+        }
+        const leftName = (left.name ?? '').trim().toLowerCase();
+        const rightName = (right.name ?? '').trim().toLowerCase();
+        if (leftName !== '' && leftName === rightName) {
+            return true;
+        }
+
+        return false;
     }
 
     const leftName = (left.name ?? '').trim().toLowerCase();
@@ -96,11 +105,68 @@ function isSamePlayerIdentity(
     return leftName !== '' && leftName === rightName;
 }
 
-const ITEM_IMAGE_BASE = 'https://velithcraft.online/api/minecraft/items';
+/** Must stay in sync with PlayerManagerController::ITEM_ICON_VANILLA_TEMPLATES (fallback if API omits list). */
+const ITEM_ICON_VANILLA_TEMPLATES = [
+    'https://mcasset.cloud/1.21.4/assets/minecraft/textures/item/{path_uri}.png',
+    'https://mcasset.cloud/1.21.4/assets/minecraft/textures/block/{path_uri}.png',
+    'https://cdn.jsdelivr.net/gh/InventivetalentDev/minecraft-assets@1.21.4/assets/minecraft/textures/item/{path_uri}.png',
+    'https://cdn.jsdelivr.net/gh/InventivetalentDev/minecraft-assets@1.21.4/assets/minecraft/textures/block/{path_uri}.png',
+] as const;
 
-function itemIconUrl(id: string): string {
-    const path = id.replace(/^minecraft:/, '');
-    return `${ITEM_IMAGE_BASE}/${path}/image`;
+function itemIconPath(id: string): string {
+    return id
+        .replace(/^minecraft:/i, '')
+        .trim()
+        .toLowerCase();
+}
+
+function applyItemIconTemplate(template: string, path: string, pathUri: string): string {
+    return template.split('{path_uri}').join(pathUri).split('{path}').join(path);
+}
+
+function itemIconUrlCandidates(id: string, templates: string[] | undefined): string[] {
+    const safeTemplates = (templates ?? []).filter((t) => t.trim() !== '');
+    const list = safeTemplates.length > 0 ? safeTemplates : [...ITEM_ICON_VANILLA_TEMPLATES];
+    const path = itemIconPath(id);
+    if (path === '') {
+        return [];
+    }
+    const pathUri = encodeURIComponent(path);
+    return list.map((template) => applyItemIconTemplate(template, path, pathUri));
+}
+
+function InventoryItemImage({
+    id,
+    label,
+    templates,
+}: {
+    id: string;
+    label: string;
+    templates: string[] | undefined;
+}) {
+    const safeTemplates = templates ?? [];
+    const templatesKey = safeTemplates.join('\n');
+    const candidates = useMemo(() => itemIconUrlCandidates(id, safeTemplates), [id, templatesKey]);
+    const [index, setIndex] = useState(0);
+
+    useEffect(() => {
+        setIndex(0);
+    }, [id, templatesKey]);
+
+    if (index >= candidates.length) {
+        return <FontAwesomeIcon icon={faBox} className={'text-neutral-500 text-xl opacity-70'} />;
+    }
+
+    return (
+        <img
+            src={candidates[index]}
+            alt={label}
+            className={
+                'mc-avatar-pixelated w-full h-full max-w-full max-h-full object-contain flex-shrink-0'
+            }
+            onError={() => setIndex((value) => value + 1)}
+        />
+    );
 }
 
 const SLOT_LABELS: Record<number, string> = {
@@ -113,10 +179,12 @@ const SLOT_LABELS: Record<number, string> = {
 
 function PlayerInventoryGrid({
     items,
+    iconTemplates = [],
     isLoading,
     onRemoveItem,
 }: {
     items: InventoryItem[];
+    iconTemplates?: string[];
     isLoading: boolean;
     onRemoveItem: (item: InventoryItem) => Promise<void>;
 }) {
@@ -181,13 +249,10 @@ function PlayerInventoryGrid({
                                                 >
                                                     <FontAwesomeIcon icon={faTrash} className={'text-[10px]'} />
                                                 </button>
-                                                <img
-                                                    src={itemIconUrl(item.id)}
-                                                    alt={label}
-                                                    className={'w-full h-full max-w-full max-h-full object-contain flex-shrink-0'}
-                                                    onError={(e) => {
-                                                        (e.target as HTMLImageElement).style.display = 'none';
-                                                    }}
+                                                <InventoryItemImage
+                                                    id={item.icon_id ?? item.id}
+                                                    label={label}
+                                                    templates={iconTemplates}
                                                 />
                                                 {count > 1 && (
                                                     <span className={'absolute bottom-0 left-0.5 text-xs font-bold text-white drop-shadow'}>
@@ -255,19 +320,11 @@ export default function PlayerManagerContainer() {
         { refreshInterval: 30000 }
     );
 
-    const { data: inventoryItems } = useSWR<InventoryItem[]>(
+    const { data: inventoryData } = useSWR<InventoryFetchResult>(
         player && playerPage === 'inventory' ? ['players', 'inventory', uuid, player.uuid] : null,
         () => getInventory(uuid, player!.uuid),
         { revalidateOnFocus: false }
     );
-
-    const onlinePlayerUuids = useMemo(() => {
-        if (!query?.online) {
-            return new Set<string>();
-        }
-
-        return new Set(query.players.list.map((nextPlayer) => normalizeUuid(nextPlayer.uuid)));
-    }, [query]);
 
     const allPlayers = useMemo<PlayerRow[]>(() => {
         const merged = new Map<string, PlayerRow>();
@@ -294,6 +351,7 @@ export default function PlayerManagerContainer() {
                     world: existing?.world ?? null,
                     first_seen_at: existing?.first_seen_at ?? null,
                     last_logout_at: existing?.last_logout_at ?? null,
+                    licensed: nextPlayer.licensed ?? existing?.licensed ?? null,
                 });
             });
         }
@@ -327,7 +385,22 @@ export default function PlayerManagerContainer() {
         return allPlayers
             .filter((nextPlayer) => nextPlayer.name.toLowerCase().includes(querySearch))
             .filter(byFilter)
-            .filter((nextPlayer) => (successAuthOnly ? Boolean(nextPlayer.first_seen_at) : true))
+            .filter((nextPlayer) => {
+                if (!successAuthOnly) {
+                    return true;
+                }
+                if (nextPlayer.first_seen_at) {
+                    return true;
+                }
+                if (
+                    query?.online &&
+                    query.players.list.some((onlinePlayer) => isSamePlayerIdentity(onlinePlayer, nextPlayer))
+                ) {
+                    return true;
+                }
+
+                return false;
+            })
             .slice(0, limit);
     }, [allPlayers, limit, query, search, successAuthOnly, tableFilter]);
 
@@ -451,7 +524,7 @@ export default function PlayerManagerContainer() {
                 {confirmOp && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmOp.avatar} alt={confirmOp.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmOp.avatar} alt={confirmOp.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmOp.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -511,7 +584,7 @@ export default function PlayerManagerContainer() {
                 {confirmBan && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmBan.avatar} alt={confirmBan.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmBan.avatar} alt={confirmBan.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmBan.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -578,7 +651,7 @@ export default function PlayerManagerContainer() {
                 {confirmKick && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmKick.avatar} alt={confirmKick.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmKick.avatar} alt={confirmKick.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmKick.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -635,7 +708,7 @@ export default function PlayerManagerContainer() {
                 {confirmClear && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmClear.avatar} alt={confirmClear.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmClear.avatar} alt={confirmClear.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmClear.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -686,7 +759,7 @@ export default function PlayerManagerContainer() {
                 {confirmWipe && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmWipe.avatar} alt={confirmWipe.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmWipe.avatar} alt={confirmWipe.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmWipe.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -739,7 +812,7 @@ export default function PlayerManagerContainer() {
                 {confirmIpBan && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmIpBan.avatar} alt={confirmIpBan.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmIpBan.avatar} alt={confirmIpBan.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmIpBan.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -797,7 +870,7 @@ export default function PlayerManagerContainer() {
                 {confirmKill && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={confirmKill.avatar} alt={confirmKill.name} className={'w-8 h-8 rounded-md'} />
+                            <img src={confirmKill.avatar} alt={confirmKill.name} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <h1 className={'text-lg'}>{confirmKill.name}</h1>
                                 <p className={'-mt-2 text-sm text-neutral-400'}>
@@ -826,7 +899,7 @@ export default function PlayerManagerContainer() {
                 {player && (
                     <>
                         <div className={'z-50 left-6 top-4 absolute h-8 flex flex-row items-center'}>
-                            <img src={player.avatar} alt={''} className={'w-8 h-8 rounded-md'} />
+                            <img src={player.avatar} alt={''} className={'mc-avatar-pixelated w-8 h-8 rounded-md'} />
                             <span className={'ml-2 flex flex-col justify-center'}>
                                 <span className={'flex items-center gap-2 flex-wrap'}>
                                     <h1 className={'text-lg'}>{player.name}</h1>
@@ -1100,11 +1173,12 @@ export default function PlayerManagerContainer() {
                                         </div>
                                     </>
                                 ) : playerPage === 'inventory' ? (
-                                    !inventoryItems ? (
+                                    !inventoryData ? (
                                         <Spinner size={'large'} centered />
                                     ) : (
                                         <PlayerInventoryGrid
-                                            items={inventoryItems}
+                                            items={inventoryData.inventory}
+                                            iconTemplates={inventoryData.item_icon_templates ?? []}
                                             isLoading={isLoading}
                                             onRemoveItem={async (item) => {
                                                 if (!player || isLoading) return;
@@ -1710,7 +1784,7 @@ export default function PlayerManagerContainer() {
                                 players={filteredAllPlayers}
                                 emptyMessage={'No players are currently available.'}
                                 onOpen={(nextPlayer) => setPlayer(nextPlayer)}
-                                isOnline={(nextPlayer) => onlinePlayerUuids.has(normalizeUuid(nextPlayer.uuid))}
+                                isOnline={isPlayerOnline}
                                 isOp={isPlayerOpped}
                                 isWhitelisted={isPlayerWhitelisted}
                                 isBanned={isPlayerBanned}

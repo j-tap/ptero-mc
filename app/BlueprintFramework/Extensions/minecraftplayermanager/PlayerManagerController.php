@@ -30,12 +30,25 @@ use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\Pl
 
 class PlayerManagerController extends ClientApiController
 {
+    /**
+     * Vanilla textures (mcasset.cloud). Update when you target a newer Minecraft asset pack.
+     *
+     * @var array<int, string>
+     */
+    private const ITEM_ICON_VANILLA_TEMPLATES = [
+        'https://mcasset.cloud/1.21.4/assets/minecraft/textures/item/{path_uri}.png',
+        'https://mcasset.cloud/1.21.4/assets/minecraft/textures/block/{path_uri}.png',
+        'https://cdn.jsdelivr.net/gh/InventivetalentDev/minecraft-assets@1.21.4/assets/minecraft/textures/item/{path_uri}.png',
+        'https://cdn.jsdelivr.net/gh/InventivetalentDev/minecraft-assets@1.21.4/assets/minecraft/textures/block/{path_uri}.png',
+    ];
+
     public function __construct(
         private DaemonFileRepository $fileRepository,
         private DaemonCommandRepository $commandRepository,
         private PlayerManagerUtilities $utils,
         private PlayerManagerUserCache $cache,
         private AuthmePlayerDataService $authmePlayerDataService,
+        private LicensePlayerDataService $licensePlayerDataService,
     ) {
         parent::__construct();
     }
@@ -142,6 +155,34 @@ class PlayerManagerController extends ClientApiController
         return $list;
     }
 
+    /**
+     * @param array<int, array<string, mixed>> $players
+     * @return array<int, array<string, mixed>>
+     */
+    private function attachLicensedToPlayers(Server $server, array $players): array
+    {
+        if ($players === []) {
+            return $players;
+        }
+
+        $licenseData = $this->licensePlayerDataService->load(
+            $server,
+            array_map(fn (array $player) => (string) ($player['name'] ?? ''), $players)
+        );
+
+        foreach ($players as $index => $player) {
+            $nameKey = strtolower(trim((string) ($player['name'] ?? '')));
+            $fromDb = $licenseData['players'][$nameKey]['licensed'] ?? null;
+            $licensed = $fromDb;
+            if ($licensed === null) {
+                $licensed = $this->utils->inferLicensedFromMinecraftUuid(isset($player['uuid']) ? (string) $player['uuid'] : null);
+            }
+            $players[$index]['licensed'] = $licensed;
+        }
+
+        return $players;
+    }
+
     private function normalizeDaemonDate(?string $value): ?string
     {
         if (!is_string($value) || trim($value) === '') {
@@ -201,6 +242,204 @@ class PlayerManagerController extends ClientApiController
         }
 
         return $sessions;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function itemIconUrlTemplates(): array
+    {
+        $merged = self::ITEM_ICON_VANILLA_TEMPLATES;
+
+        $custom = trim((string) config('minecraftplayermanager.item_icons.custom_template', ''));
+        if ($custom !== '') {
+            $merged = array_merge($merged, [$custom]);
+        }
+
+        return array_values(array_unique($merged));
+    }
+
+    private function legacyNumericItemIdToNamespaced(int $legacyId): ?string
+    {
+        return match ($legacyId) {
+            322 => 'minecraft:golden_apple',
+            442 => 'minecraft:shield',
+            default => null,
+        };
+    }
+
+    private function normalizeInventoryItemIdString(string $raw): string
+    {
+        $idStr = trim($raw, " \t\n\r\0\x0B\"'");
+        if ($idStr === '') {
+            return '';
+        }
+        if (preg_match('/^([a-z0-9_.-]+:[a-z0-9_./-]+|[a-z0-9_./-]+)/i', $idStr, $matches)) {
+            $idStr = $matches[1];
+        }
+        if (preg_match('/^-?\d+$/', $idStr)) {
+            $mapped = $this->legacyNumericItemIdToNamespaced((int) $idStr);
+            if ($mapped !== null) {
+                return $mapped;
+            }
+        }
+        $idStr = strtolower($idStr);
+        if (strpos($idStr, ':') === false && !is_numeric($idStr)) {
+            $idStr = 'minecraft:' . $idStr;
+        }
+
+        return $idStr;
+    }
+
+    /**
+     * NBT Node::findChildByName is recursive and can return a nested "id" (e.g. banner pattern), not the item id.
+     */
+    private function nbtDirectChildByName(mixed $parent, string $name): mixed
+    {
+        if (!is_object($parent) || !method_exists($parent, 'getChildren')) {
+            return false;
+        }
+        if (method_exists($parent, 'isLeaf') && $parent->isLeaf()) {
+            return false;
+        }
+        foreach ($parent->getChildren() as $child) {
+            if ((string) $child->getName() === $name) {
+                return $child;
+            }
+        }
+
+        return false;
+    }
+
+    private function stringContainsInsensitive(string $haystack, string $needle): bool
+    {
+        if (function_exists('mb_stripos')) {
+            return mb_stripos($haystack, $needle, 0, 'UTF-8') !== false;
+        }
+
+        return stripos($haystack, $needle) !== false;
+    }
+
+    private function nbtDirectChildByNames(mixed $parent, string ...$names): mixed
+    {
+        foreach ($names as $name) {
+            $node = $this->nbtDirectChildByName($parent, $name);
+            if ($node !== false) {
+                return $node;
+            }
+        }
+
+        return false;
+    }
+
+    private function nbtDirectNumericValue(mixed $parent, string ...$names): ?int
+    {
+        $node = $this->nbtDirectChildByNames($parent, ...$names);
+        if ($node === false) {
+            return null;
+        }
+
+        $value = $node->getValue();
+        if (!is_numeric($value)) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
+    private function nbtItemHasEnchantmentGlintOverride(mixed $root): bool
+    {
+        if (!is_object($root) || !method_exists($root, 'isLeaf') || $root->isLeaf()) {
+            return false;
+        }
+
+        $components = $this->nbtDirectChildByName($root, 'components');
+        if ($components === false || $components->isLeaf()) {
+            return false;
+        }
+
+        foreach ($components->getChildren() as $child) {
+            $key = strtolower((string) $child->getName());
+            if (!str_contains($key, 'enchantment_glint_override')) {
+                continue;
+            }
+            $value = $child->getValue();
+            if ($value === true) {
+                return true;
+            }
+            if (is_numeric($value) && (int) $value !== 0) {
+                return true;
+            }
+            if (is_string($value) && strtolower(trim($value)) === 'true') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param mixed $root Item compound (often under "item" in 1.20.5+ saves)
+     * @param mixed $tag  "tag" / "Tag" compound or false
+     */
+    private function inferInventoryShieldId(mixed $root, mixed $tag): ?string
+    {
+        if (is_object($root) && method_exists($root, 'isLeaf') && !$root->isLeaf()) {
+            $components = $this->nbtDirectChildByName($root, 'components');
+            if ($components !== false && !$components->isLeaf()) {
+                foreach ($components->getChildren() as $child) {
+                    $key = strtolower((string) $child->getName());
+                    if (str_contains($key, 'banner_patterns') || str_contains($key, 'base_color')) {
+                        return 'minecraft:shield';
+                    }
+                }
+            }
+        }
+
+        if ($tag !== false && is_object($tag) && method_exists($tag, 'isLeaf') && !$tag->isLeaf()) {
+            $blockEntity = $this->nbtDirectChildByName($tag, 'BlockEntityTag');
+            if ($blockEntity !== false && !$blockEntity->isLeaf()) {
+                $patterns = $this->nbtDirectChildByName($blockEntity, 'Patterns');
+                if ($patterns !== false) {
+                    return 'minecraft:shield';
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveInventoryItemIconId(string $idStr, mixed $root, mixed $tag, ?string $displayName): string
+    {
+        $lower = strtolower($idStr);
+        if ($lower === 'minecraft:golden_apple' || $lower === 'golden_apple') {
+            if ($this->nbtItemHasEnchantmentGlintOverride($root)) {
+                return 'minecraft:enchanted_golden_apple';
+            }
+            $legacyDamage = $this->nbtDirectNumericValue($root, 'Damage', 'damage')
+                ?? $this->nbtDirectNumericValue($tag, 'Damage', 'damage');
+            if ($legacyDamage === 1) {
+                    return 'minecraft:enchanted_golden_apple';
+            }
+        }
+
+        if (is_string($displayName) && trim($displayName) !== '') {
+            $title = trim($displayName);
+
+            if ($this->stringContainsInsensitive($title, 'shield') || $this->stringContainsInsensitive($title, 'щит')) {
+                return 'minecraft:shield';
+            }
+
+            $isEnchApple = (
+                ($this->stringContainsInsensitive($title, 'enchanted') && $this->stringContainsInsensitive($title, 'apple'))
+                || ($this->stringContainsInsensitive($title, 'зачар') && $this->stringContainsInsensitive($title, 'яблок'))
+            );
+            if ($isEnchApple) {
+                return 'minecraft:enchanted_golden_apple';
+            }
+        }
+
+        return $idStr;
     }
 
     public function index(PlayerManagerGetRequest $request, Server $server): array
@@ -280,14 +519,30 @@ class PlayerManagerController extends ClientApiController
 
             $players = [];
             foreach ($data['players']['list'] ?? [] as $player) {
-                $uuid = str_replace('-', '', $player['id']);
+                if (!is_array($player)) {
+                    continue;
+                }
+
+                $rawId = $player['id'] ?? $player['uuid'] ?? null;
+                if (!is_string($rawId) || trim($rawId) === '') {
+                    continue;
+                }
+
+                $name = $player['name'] ?? null;
+                if (!is_string($name) || trim($name) === '') {
+                    continue;
+                }
+
+                $uuidCanonical = $this->utils->formatUuid(str_replace('-', '', $rawId));
 
                 $players[] = [
-                    'uuid' => $player['id'],
-                    'name' => $player['name'],
-                    'avatar' => $this->avatarUrl($player['id']),
+                    'uuid' => $uuidCanonical,
+                    'name' => $name,
+                    'avatar' => $this->avatarUrl($uuidCanonical),
                 ];
             }
+
+            $players = $this->attachLicensedToPlayers($server, $players);
 
             return [
                 'success' => true,
@@ -363,15 +618,8 @@ class PlayerManagerController extends ClientApiController
         }
 
         $players = Cache::remember("minecraftserver:offline:{$server->id}", 30, function () use ($server, $levelName) {
-            try {
-                $query = $this->queryApi($server);
-                $exclude = array_map(function ($player) {
-                    return "{$this->utils->formatUuid($player['id'])}.dat";
-                }, $query['players']['list'] ?? []);
-            } catch (\Throwable $e) {
-                $exclude = [];
-            }
-
+            // Include playerdata for everyone with a .dat file (including currently online players) so
+            // stats / AuthMe / license merge runs for them; the UI marks Online from the status query.
             $cache = $this->cache->collect($server);
             $playerData = $this->fileRepository->setServer($server)->getDirectory("$levelName/playerdata");
             $players = [];
@@ -379,7 +627,7 @@ class PlayerManagerController extends ClientApiController
 
             foreach ($playerData as $file) {
                 $filename = $file['name'] ?? null;
-                if (!is_string($filename) || !str_ends_with($filename, '.dat') || in_array($filename, $exclude, true)) {
+                if (!is_string($filename) || !str_ends_with($filename, '.dat')) {
                     continue;
                 }
 
@@ -405,6 +653,7 @@ class PlayerManagerController extends ClientApiController
                     'reg_ip' => null,
                     'ip' => null,
                     'world' => null,
+                    'licensed' => null,
                 ];
 
                 $statsPaths[$uuid] = "$levelName/stats/$uuid.json";
@@ -441,9 +690,21 @@ class PlayerManagerController extends ClientApiController
                 $players[$uuid]['world'] = $authmePlayer['world'] ?? null;
             }
 
+            $licenseData = $this->licensePlayerDataService->load(
+                $server,
+                array_map(fn (array $player) => $player['name'], array_values($players))
+            );
+
+            foreach ($players as $uuid => $player) {
+                $nameKey = strtolower(trim((string) ($player['name'] ?? '')));
+                $fromDb = $licenseData['players'][$nameKey]['licensed'] ?? null;
+                $players[$uuid]['licensed'] = $fromDb
+                    ?? $this->utils->inferLicensedFromMinecraftUuid($player['uuid']);
+            }
+
             return [
                 'players' => $this->sortList(array_values($players)),
-                'warnings' => $authmeData['warnings'] ?? [],
+                'warnings' => array_merge($authmeData['warnings'] ?? [], $licenseData['warnings'] ?? []),
             ];
         });
 
@@ -455,21 +716,84 @@ class PlayerManagerController extends ClientApiController
     }
 
     private const MINESKIN_API = 'https://api.mineskin.org';
-    private const MINOTAR_AVATAR = 'https://minotar.net/helm/{uuid}/256.png';
-    private const MINOTAR_SKIN = 'https://minotar.net/skin/{uuid}';
+    private const MOJANG_PROFILE_API = 'https://sessionserver.mojang.com/session/minecraft/profile/%s';
+    private const DEFAULT_AVATAR = 'https://crafatar.com/avatars/{uuid}?size=256&overlay';
+    private const MOJANG_SKIN_SENTINEL = '__mojang__';
+
+    private function applyUuidTemplate(?string $template, string $uuid): ?string
+    {
+        if (!is_string($template) || trim($template) === '') {
+            return null;
+        }
+
+        return str_replace('{uuid}', str_replace('-', '', $uuid), $template);
+    }
+
+    private function mojangSkinTextureUrl(string $uuid): ?string
+    {
+        $uuidClean = str_replace('-', '', $uuid);
+        if (!preg_match('/^[a-f0-9]{32}$/i', $uuidClean)) {
+            return null;
+        }
+
+        $apiUrl = sprintf(self::MOJANG_PROFILE_API, $uuidClean);
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => "User-Agent: Pterodactyl-PlayerManager/1.0\r\nAccept: application/json",
+                'timeout' => 3,
+                'ignore_errors' => true,
+            ],
+        ]);
+
+        $raw = @file_get_contents($apiUrl, false, $context);
+        if (!is_string($raw) || trim($raw) === '') {
+            return null;
+        }
+
+        $profile = json_decode($raw, true);
+        if (!is_array($profile) || !isset($profile['properties']) || !is_array($profile['properties'])) {
+            return null;
+        }
+
+        foreach ($profile['properties'] as $property) {
+            if (!is_array($property) || ($property['name'] ?? null) !== 'textures' || !isset($property['value'])) {
+                continue;
+            }
+
+            $decoded = base64_decode((string) $property['value'], true);
+            if (!is_string($decoded) || $decoded === '') {
+                continue;
+            }
+
+            $textures = json_decode($decoded, true);
+            $url = $textures['textures']['SKIN']['url'] ?? null;
+            if (is_string($url) && trim($url) !== '') {
+                return $url;
+            }
+        }
+
+        return null;
+    }
 
     private function avatarUrl(string $uuid): string
     {
-        $uuid = str_replace('-', '', $uuid);
+        $template = config('minecraftplayermanager.avatar_url', self::DEFAULT_AVATAR);
 
-        return str_replace('{uuid}', $uuid, config('minecraftplayermanager.avatar_url', self::MINOTAR_AVATAR));
+        return $this->applyUuidTemplate($template, $uuid)
+            ?? $this->applyUuidTemplate(self::DEFAULT_AVATAR, $uuid)
+            ?? self::DEFAULT_AVATAR;
     }
 
-    private function skinTextureUrl(string $uuid): string
+    private function skinTextureUrl(string $uuid): ?string
     {
-        $uuidClean = str_replace('-', '', $uuid);
+        $template = config('minecraftplayermanager.skin_url', self::MOJANG_SKIN_SENTINEL);
 
-        return str_replace('{uuid}', $uuidClean, config('minecraftplayermanager.skin_url', self::MINOTAR_SKIN));
+        if ($template === self::MOJANG_SKIN_SENTINEL) {
+            return $this->mojangSkinTextureUrl($uuid);
+        }
+
+        return $this->applyUuidTemplate(is_string($template) ? $template : null, $uuid);
     }
 
     public function skin(PlayerManagerGetRequest $request)
@@ -2006,7 +2330,11 @@ class PlayerManagerController extends ClientApiController
             $hasArmor = count(array_filter($inventory, fn ($e) => $e['slot'] >= 100 && $e['slot'] <= 103)) > 0;
             $showDebug = $request->query('debug') === '1' || $request->query('debug') === 'true' || !$hasArmor;
 
-            $response = ['success' => true, 'inventory' => $inventory];
+            $response = [
+                'success' => true,
+                'inventory' => $inventory,
+                'item_icon_templates' => $this->itemIconUrlTemplates(),
+            ];
             if ($showDebug && !empty($debugInfo)) {
                 $response['_debug'] = $debugInfo;
             }
@@ -2017,6 +2345,7 @@ class PlayerManagerController extends ClientApiController
                 'success' => false,
                 'error' => 'Failed to read player inventory',
                 'inventory' => [],
+                'item_icon_templates' => $this->itemIconUrlTemplates(),
             ], 200);
         }
     }

@@ -4,6 +4,8 @@ export type Player = {
     name: string;
     uuid: string;
     avatar: string;
+    /** Mojang vs offline heuristic (UUID v4/v3) or DB override when configured */
+    licensed?: boolean | null;
 };
 
 export type OppedPlayer = Player & {

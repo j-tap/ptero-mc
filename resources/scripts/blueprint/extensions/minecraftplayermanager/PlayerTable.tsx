@@ -14,11 +14,13 @@ type PlayerTableEntry = Player & {
     world?: string | null;
     first_seen_at?: string | null;
     last_logout_at?: string | null;
+    licensed?: boolean | null;
 };
 
 type SortKey =
     | 'name'
     | 'status'
+    | 'licensed'
     | 'opped'
     | 'whitelisted'
     | 'banned'
@@ -133,6 +135,7 @@ export default function PlayerTable({
             const compareByKey: Record<SortKey, number> = {
                 name: left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
                 status: Number(leftStatus) - Number(rightStatus),
+                licensed: Number(left.licensed === true) - Number(right.licensed === true),
                 opped: Number(leftOpped) - Number(rightOpped),
                 whitelisted: Number(leftWhitelisted) - Number(rightWhitelisted),
                 banned: Number(leftBanned) - Number(rightBanned),
@@ -180,7 +183,7 @@ export default function PlayerTable({
 
     return (
         <div className={'w-full overflow-x-auto rounded-md border border-gray-700'}>
-            <table className={'w-full min-w-[74rem] bg-gray-800'}>
+            <table className={'w-full min-w-[80rem] bg-gray-800'}>
                 <thead className={'bg-gray-700/70 text-left'}>
                     <tr>
                         <th className={headerCellClass}>
@@ -193,6 +196,12 @@ export default function PlayerTable({
                             <button type={'button'} className={headerButtonClass} onClick={() => toggleSort('status')}>
                                 Status
                                 <FontAwesomeIcon icon={sortIcon('status')} className={'text-xs text-neutral-400'} />
+                            </button>
+                        </th>
+                        <th className={headerCellClass}>
+                            <button type={'button'} className={headerButtonClass} onClick={() => toggleSort('licensed')}>
+                                Licensed
+                                <FontAwesomeIcon icon={sortIcon('licensed')} className={'text-xs text-neutral-400'} />
                             </button>
                         </th>
                         <th className={headerCellClass}>
@@ -297,7 +306,11 @@ export default function PlayerTable({
                         >
                             <td className={'px-3 py-2'}>
                                 <div className={'flex items-center gap-3'}>
-                                    <img src={player.avatar} alt={player.name} className={'w-8 h-8 rounded'} />
+                                    <img
+                                        src={player.avatar}
+                                        alt={player.name}
+                                        className={'mc-avatar-pixelated w-8 h-8 rounded'}
+                                    />
                                     <span className={'text-sm text-neutral-200'}>{player.name}</span>
                                 </div>
                             </td>
@@ -308,6 +321,7 @@ export default function PlayerTable({
                                     <span className={'text-neutral-300'}>Offline</span>
                                 )}
                             </td>
+                            <td className={'px-3 py-2 text-xs text-neutral-300'}>{renderYesNo(player.licensed ?? null)}</td>
                             <td className={'px-3 py-2 text-xs text-neutral-300'}>{renderYesDash(isOp(player))}</td>
                             <td className={'px-3 py-2 text-xs text-neutral-300'}>{renderYesDash(isWhitelisted(player))}</td>
                             <td className={'px-3 py-2 text-xs text-neutral-300 whitespace-nowrap'}>
