@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSort, faSortDown, faSortUp } from '@fortawesome/free-solid-svg-icons';
 import { Player } from './api/getStatus';
 import UptimeDuration from '@/components/server/UptimeDuration';
+import { normalizePlayerUuid } from './playerIdentity';
 
 type PlayerTableEntry = Player & {
     reason?: string;
@@ -300,7 +301,7 @@ export default function PlayerTable({
                 <tbody>
                     {sortedPlayers.map((player) => (
                         <tr
-                            key={player.uuid}
+                            key={normalizePlayerUuid(player.uuid) || player.name}
                             className={'border-t border-gray-700 cursor-pointer hover:bg-gray-700/70 transition-colors'}
                             onClick={() => onOpen(player)}
                         >

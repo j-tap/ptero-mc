@@ -91,6 +91,19 @@ class PlayerManagerUtilities
         return substr($uuid, 0, 8) . '-' . substr($uuid, 8, 4) . '-' . substr($uuid, 12, 4) . '-' . substr($uuid, 16, 4) . '-' . substr($uuid, 20);
     }
 
+    /** Case- and hyphen-insensitive comparison of two Minecraft UUID strings (32 hex digits). */
+    public function sameMinecraftUuid(?string $a, ?string $b): bool
+    {
+        if (!is_string($a) || !is_string($b)) {
+            return false;
+        }
+
+        $a = strtolower(preg_replace('/[^0-9a-fA-F]/', '', $a));
+        $b = strtolower(preg_replace('/[^0-9a-fA-F]/', '', $b));
+
+        return strlen($a) === 32 && $a === $b;
+    }
+
     /**
      * Minecraft offline (cracked) accounts use UUID v3; Mojang accounts typically use v4.
      * Query/ping does not expose license status — this is a best-effort signal when no DB row exists.

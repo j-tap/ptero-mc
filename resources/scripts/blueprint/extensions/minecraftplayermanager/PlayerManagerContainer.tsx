@@ -12,6 +12,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
     faBan,
     faBox,
+    faChartBar,
     faCog,
     faCrown,
     faCross,
@@ -57,6 +58,7 @@ import Select from '@/components/elements/Select';
 import OldInput from '@/components/elements/Input';
 import Tooltip from '@/components/elements/tooltip/Tooltip';
 import removeInventoryItem from './api/removeInventoryItem';
+import { isSamePlayerIdentity, normalizePlayerUuid, samePlayerUuid } from './playerIdentity';
 
 type PlayerRow = OfflinePlayer & {
     reason?: string;
@@ -73,36 +75,6 @@ const INVENTORY_SLOT_ORDER: number[][] = [
 function formatItemId(id: string): string {
     const name = id.replace(/^minecraft:/, '').replace(/_/g, ' ');
     return name.replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function normalizeUuid(value?: string | null): string {
-    return (value ?? '').replace(/-/g, '').toLowerCase();
-}
-
-function isSamePlayerIdentity(
-    left: { uuid?: string | null; name?: string | null },
-    right: { uuid?: string | null; name?: string | null }
-): boolean {
-    const leftUuid = normalizeUuid(left.uuid);
-    const rightUuid = normalizeUuid(right.uuid);
-
-    if (leftUuid && rightUuid) {
-        if (leftUuid === rightUuid) {
-            return true;
-        }
-        const leftName = (left.name ?? '').trim().toLowerCase();
-        const rightName = (right.name ?? '').trim().toLowerCase();
-        if (leftName !== '' && leftName === rightName) {
-            return true;
-        }
-
-        return false;
-    }
-
-    const leftName = (left.name ?? '').trim().toLowerCase();
-    const rightName = (right.name ?? '').trim().toLowerCase();
-
-    return leftName !== '' && leftName === rightName;
 }
 
 /** Must stay in sync with PlayerManagerController::ITEM_ICON_VANILLA_TEMPLATES (fallback if API omits list). */
@@ -275,6 +247,10 @@ function PlayerInventoryGrid({
     );
 }
 
+/** Must match iframe `width` / `height` query params for the embedded skin viewer. */
+const PLAYER_DIALOG_SKIN_VIEW_WIDTH = 224;
+const PLAYER_DIALOG_SKIN_VIEW_HEIGHT = 256;
+
 export default function PlayerManagerContainer() {
     const uuid = ServerContext.useStoreState((state) => state.server.data!.uuid);
     const { clearFlashes, clearAndAddHttpError } = useFlash();
@@ -301,10 +277,15 @@ export default function PlayerManagerContainer() {
     const [newOpModalVisible, setNewOpModalVisible] = useState(false);
     const [newWhitelistModalVisible, setNewWhitelistModalVisible] = useState(false);
     const [newBanModalVisible, setNewBanModalVisible] = useState(false);
+    const [skinPreviewFrameLoaded, setSkinPreviewFrameLoaded] = useState(false);
 
     useEffect(() => {
         clearFlashes();
     }, [player, tableFilter]);
+
+    useEffect(() => {
+        setSkinPreviewFrameLoaded(false);
+    }, [player?.uuid]);
 
     const { data: query, mutate } = useSWR(['players', 'query', uuid], () => getStatus(uuid), {
         refreshInterval: 10000,
@@ -315,13 +296,15 @@ export default function PlayerManagerContainer() {
     });
 
     const { data: stats } = useSWR(
-        ['players', 'stats', uuid, player?.uuid],
+        ['players', 'stats', uuid, player?.uuid ? normalizePlayerUuid(player.uuid) : null],
         () => (player ? getStats(uuid, player.uuid) : undefined),
         { refreshInterval: 30000 }
     );
 
     const { data: inventoryData } = useSWR<InventoryFetchResult>(
-        player && playerPage === 'inventory' ? ['players', 'inventory', uuid, player.uuid] : null,
+        player && playerPage === 'inventory'
+            ? ['players', 'inventory', uuid, normalizePlayerUuid(player.uuid)]
+            : null,
         () => getInventory(uuid, player!.uuid),
         { revalidateOnFocus: false }
     );
@@ -330,29 +313,58 @@ export default function PlayerManagerContainer() {
         const merged = new Map<string, PlayerRow>();
 
         (offline?.players ?? []).forEach((nextPlayer) => {
-            merged.set(normalizeUuid(nextPlayer.uuid), nextPlayer);
+            merged.set(normalizePlayerUuid(nextPlayer.uuid), nextPlayer);
         });
 
         if (query?.online) {
             query.players.list.forEach((nextPlayer) => {
-                const key = normalizeUuid(nextPlayer.uuid);
-                const existing = merged.get(key);
-                merged.set(key, {
-                    ...existing,
-                    ...nextPlayer,
-                    reason:
-                        query.banned.players.find((bannedPlayer) => isSamePlayerIdentity(bannedPlayer, nextPlayer))?.reason ??
-                        existing?.reason,
-                    playtime: existing?.playtime ?? null,
-                    session_count: existing?.session_count ?? null,
-                    has_session: existing?.has_session ?? null,
-                    reg_ip: existing?.reg_ip ?? null,
-                    ip: existing?.ip ?? null,
-                    world: existing?.world ?? null,
-                    first_seen_at: existing?.first_seen_at ?? null,
-                    last_logout_at: existing?.last_logout_at ?? null,
-                    licensed: nextPlayer.licensed ?? existing?.licensed ?? null,
-                });
+                const onlineKey = normalizePlayerUuid(nextPlayer.uuid);
+                let mapKey = onlineKey;
+                let existing = merged.get(onlineKey);
+                if (!existing) {
+                    for (const [key, row] of merged) {
+                        if (isSamePlayerIdentity(row, nextPlayer)) {
+                            existing = row;
+                            mapKey = key;
+                            break;
+                        }
+                    }
+                }
+
+                if (existing) {
+                    merged.set(mapKey, {
+                        ...existing,
+                        ...nextPlayer,
+                        uuid: nextPlayer.uuid,
+                        avatar: nextPlayer.avatar,
+                        reason:
+                            query.banned.players.find((bannedPlayer) => isSamePlayerIdentity(bannedPlayer, nextPlayer))?.reason ??
+                            existing.reason,
+                        playtime: existing.playtime ?? null,
+                        session_count: existing.session_count ?? null,
+                        has_session: existing.has_session ?? null,
+                        reg_ip: existing.reg_ip ?? null,
+                        ip: existing.ip ?? null,
+                        world: existing.world ?? null,
+                        first_seen_at: existing.first_seen_at ?? null,
+                        last_logout_at: existing.last_logout_at ?? null,
+                        licensed: existing.licensed ?? nextPlayer.licensed ?? null,
+                    });
+                } else {
+                    merged.set(onlineKey, {
+                        ...nextPlayer,
+                        reason: query.banned.players.find((bannedPlayer) => isSamePlayerIdentity(bannedPlayer, nextPlayer))?.reason,
+                        playtime: null,
+                        session_count: null,
+                        has_session: null,
+                        reg_ip: null,
+                        ip: null,
+                        world: null,
+                        first_seen_at: null,
+                        last_logout_at: null,
+                        licensed: nextPlayer.licensed ?? null,
+                    });
+                }
             });
         }
 
@@ -930,24 +942,35 @@ export default function PlayerManagerContainer() {
                         </div>
 
                         <div className={'w-full pt-10 flex flex-row'}>
-                            <div className={'bg-gray-700 rounded-md md:block relative hidden h-72 w-60 mr-4 mb-5'}>
-                                <div
-                                    className={
-                                        'left-0 top-0 bottom-0 right-0 m-auto absolute flex flex-row items-center justify-center'
-                                    }
-                                >
-                                    <Spinner size={'small'} centered />
-                                </div>
+                            <div
+                                className={
+                                    'bg-gray-700 rounded-md relative hidden md:flex h-72 w-60 shrink-0 mr-4 mb-5 flex-col items-center justify-center overflow-hidden p-2'
+                                }
+                            >
+                                {!skinPreviewFrameLoaded ? (
+                                    <div
+                                        className={
+                                            'absolute inset-0 z-10 flex items-center justify-center bg-gray-700'
+                                        }
+                                    >
+                                        <Spinner size={'small'} centered />
+                                    </div>
+                                ) : null}
 
                                 <iframe
-                                    src={`/api/client/extensions/minecraftplayermanager/servers/${uuid}/skin?uuid=${player.uuid.replace(
-                                        /-/g,
-                                        ''
-                                    )}&height=256&width=128`}
+                                    title={'Skin preview'}
+                                    src={`/api/client/extensions/minecraftplayermanager/servers/${uuid}/skin?uuid=${encodeURIComponent(
+                                        player.uuid
+                                    )}&height=${PLAYER_DIALOG_SKIN_VIEW_HEIGHT}&width=${PLAYER_DIALOG_SKIN_VIEW_WIDTH}`}
                                     loading={'lazy'}
                                     referrerPolicy={'no-referrer'}
                                     sandbox={'allow-scripts allow-same-origin'}
-                                    className={'h-64 left-0 top-0 bottom-0 right-0 m-auto w-36 absolute'}
+                                    className={'relative z-0 block shrink-0 border-0 bg-transparent mx-auto'}
+                                    style={{
+                                        width: PLAYER_DIALOG_SKIN_VIEW_WIDTH,
+                                        height: PLAYER_DIALOG_SKIN_VIEW_HEIGHT,
+                                    }}
+                                    onLoad={() => setSkinPreviewFrameLoaded(true)}
                                 />
                             </div>
                             <div className={'flex flex-col w-full'}>
@@ -983,7 +1006,7 @@ export default function PlayerManagerContainer() {
                                                                         whitelist: {
                                                                             ...query.whitelist,
                                                                             list: query.whitelist.list.filter(
-                                                                                (p) => p.uuid !== player.uuid
+                                                                                (p) => !samePlayerUuid(p.uuid, player.uuid)
                                                                             ),
                                                                         },
                                                                     },
@@ -1042,7 +1065,7 @@ export default function PlayerManagerContainer() {
                                                                     {
                                                                         ...query,
                                                                         opped: query.opped.filter(
-                                                                            (p) => p.uuid !== player.uuid
+                                                                            (p) => !samePlayerUuid(p.uuid, player.uuid)
                                                                         ),
                                                                     },
                                                                     false
@@ -1084,7 +1107,7 @@ export default function PlayerManagerContainer() {
                                                                         banned: {
                                                                             ...query.banned,
                                                                             players: query.banned.players.filter(
-                                                                                (p) => p.uuid !== player.uuid
+                                                                                (p) => !samePlayerUuid(p.uuid, player.uuid)
                                                                             ),
                                                                         },
                                                                     },
@@ -1191,7 +1214,7 @@ export default function PlayerManagerContainer() {
                                                 setIsLoading(true);
                                                 try {
                                                     await removeInventoryItem(uuid, player.uuid, item.slot);
-                                                    await mutateGlobal(['players', 'inventory', uuid, player.uuid]);
+                                                    await mutateGlobal(['players', 'inventory', uuid, normalizePlayerUuid(player.uuid)]);
                                                 } catch (error) {
                                                     console.error(error);
                                                     clearAndAddHttpError({ error, key: 'players:view' });
@@ -1249,7 +1272,7 @@ export default function PlayerManagerContainer() {
                                                         setIsLoading(true);
                                                         try {
                                                             await setPosition(uuid, player.uuid, { x, y, z });
-                                                            await mutateGlobal(['players', 'stats', uuid, player.uuid]);
+                                                            await mutateGlobal(['players', 'stats', uuid, normalizePlayerUuid(player.uuid)]);
                                                         } catch (e) {
                                                             clearAndAddHttpError({ error: e as Error, key: 'players:view' });
                                                         } finally {
@@ -1296,7 +1319,7 @@ export default function PlayerManagerContainer() {
                                                                 setIsLoading(true);
                                                                 try {
                                                                     await setGamemode(uuid, player.uuid, mode);
-                                                                    await mutateGlobal(['players', 'stats', uuid, player.uuid]);
+                                                                    await mutateGlobal(['players', 'stats', uuid, normalizePlayerUuid(player.uuid)]);
                                                                 } catch (e) {
                                                                     clearAndAddHttpError({ error: e as Error, key: 'players:view' });
                                                                 } finally {
@@ -1392,7 +1415,7 @@ export default function PlayerManagerContainer() {
                                                                 setIsLoading(true);
                                                                 try {
                                                                     await setLevel(uuid, player.uuid, level);
-                                                                    await mutateGlobal(['players', 'stats', uuid, player.uuid]);
+                                                                    await mutateGlobal(['players', 'stats', uuid, normalizePlayerUuid(player.uuid)]);
                                                                 } catch (e) {
                                                                     clearAndAddHttpError({ error: e as Error, key: 'players:view' });
                                                                 } finally {
@@ -1702,6 +1725,19 @@ export default function PlayerManagerContainer() {
                         <div className={'mb-4 flex flex-col md:flex-row md:justify-between md:items-center gap-3 w-full'}>
                             <h1 className={'text-2xl'}>Player management</h1>
                             <div className={'flex flex-wrap gap-2'}>
+                                {query.external_stats_url ? (
+                                    <Button.Text
+                                        type={'button'}
+                                        onClick={() => {
+                                            window.open(query.external_stats_url!, '_blank', 'noopener,noreferrer');
+                                        }}
+                                    >
+                                        <span className={'inline-flex items-center gap-2'}>
+                                            <FontAwesomeIcon icon={faChartBar} className={'text-xs'} />
+                                            Global statistics
+                                        </span>
+                                    </Button.Text>
+                                ) : null}
                                 <Button.Text onClick={() => setBannedIpsModalVisible(true)}>View Banned IPs</Button.Text>
                                 <Button.Text
                                     disabled={isLoading}

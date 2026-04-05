@@ -17,6 +17,7 @@ Route::group([
 	Route::get('/', [minecraftplayermanager\PlayerManagerController::class, 'index']);
 	Route::get('/skin', [minecraftplayermanager\PlayerManagerController::class, 'skin']);
 	Route::get('/skinTexture', [minecraftplayermanager\PlayerManagerController::class, 'skinTexture']);
+	Route::get('/skinImage', [minecraftplayermanager\PlayerManagerController::class, 'skinImage']);
 	Route::get('/offline', [minecraftplayermanager\PlayerManagerController::class, 'offline']);
 	Route::get('/stats/{uuid}', [minecraftplayermanager\PlayerManagerController::class, 'stats']);
 	Route::get('/inventory/{uuid}', [minecraftplayermanager\PlayerManagerController::class, 'inventory']);

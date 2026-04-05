@@ -26,46 +26,49 @@ export default async (
     uuid: string
 ): Promise<
     | {
-          ping: number;
-          online: true;
-          online_mode: boolean;
-          is_proxy: boolean;
-          is_proxied: boolean;
-          opped: OppedPlayer[];
+        ping: number;
+        online: true;
+        online_mode: boolean;
+        is_proxy: boolean;
+        is_proxied: boolean;
+        /** Panel config; opens in new tab when set */
+        external_stats_url?: string | null;
+        opped: OppedPlayer[];
 
-          banned: {
-              players: BannedPlayer[];
-              ips: BannedIP[];
-          };
+        banned: {
+            players: BannedPlayer[];
+            ips: BannedIP[];
+        };
 
-          whitelist: {
-              enabled: boolean;
-              list: Player[];
-          };
+        whitelist: {
+            enabled: boolean;
+            list: Player[];
+        };
 
-          players: {
-              online: number;
-              max: number;
-              list: Player[];
-          };
-      }
+        players: {
+            online: number;
+            max: number;
+            list: Player[];
+        };
+    }
     | {
-          online: false;
-          online_mode: boolean;
-          is_proxy: boolean;
-          is_proxied: boolean;
-          opped: OppedPlayer[];
+        online: false;
+        online_mode: boolean;
+        is_proxy: boolean;
+        is_proxied: boolean;
+        external_stats_url?: string | null;
+        opped: OppedPlayer[];
 
-          banned: {
-              players: BannedPlayer[];
-              ips: BannedIP[];
-          };
+        banned: {
+            players: BannedPlayer[];
+            ips: BannedIP[];
+        };
 
-          whitelist: {
-              enabled: boolean;
-              list: Player[];
-          };
-      }
+        whitelist: {
+            enabled: boolean;
+            list: Player[];
+        };
+    }
 > => {
     const { data } = await http.get(`/api/client/extensions/minecraftplayermanager/servers/${uuid}`);
 

@@ -27,6 +27,8 @@ use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\Pl
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetLevelRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerSetPositionRequest;
 use Pterodactyl\BlueprintFramework\Extensions\minecraftplayermanager\Requests\PlayerManagerInventorySlotRequest;
+use Illuminate\Support\Facades\Http;
+use Symfony\Component\HttpFoundation\Response;
 
 class PlayerManagerController extends ClientApiController
 {
@@ -442,8 +444,29 @@ class PlayerManagerController extends ClientApiController
         return $idStr;
     }
 
+    /** Only http(s) URLs; empty config yields null (UI hides the button). */
+    private function externalStatsUrlForClient(): ?string
+    {
+        $raw = trim((string) config('minecraftplayermanager.external_stats_url', ''));
+        if ($raw === '') {
+            return null;
+        }
+
+        if (filter_var($raw, FILTER_VALIDATE_URL) === false) {
+            return null;
+        }
+
+        $scheme = strtolower((string) (parse_url($raw, PHP_URL_SCHEME) ?? ''));
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            return null;
+        }
+
+        return $raw;
+    }
+
     public function index(PlayerManagerGetRequest $request, Server $server): array
     {
+        $externalStatsUrl = $this->externalStatsUrlForClient();
         $properties = $this->utils->configs($server)['server.properties'];
 
         $opped = [];
@@ -551,6 +574,7 @@ class PlayerManagerController extends ClientApiController
                 'online_mode' => !$this->utils->isOfflineMode($server),
                 'is_proxy' => $this->utils->isProxy($server),
                 'is_proxied' => $this->utils->isProxied($server),
+                'external_stats_url' => $externalStatsUrl,
                 'opped' => $this->sortList($opped),
                 'banned' => [
                     'players' => $this->sortList($banned),
@@ -571,6 +595,7 @@ class PlayerManagerController extends ClientApiController
                 'online_mode' => !$this->utils->isOfflineMode($server),
                 'is_proxy' => $this->utils->isProxy($server),
                 'is_proxied' => $this->utils->isProxied($server),
+                'external_stats_url' => $externalStatsUrl,
                 'opped' => $this->sortList($opped),
                 'banned' => [
                     'players' => $this->sortList($banned),
@@ -796,6 +821,76 @@ class PlayerManagerController extends ClientApiController
         return $this->applyUuidTemplate(is_string($template) ? $template : null, $uuid);
     }
 
+    /**
+     * Remote PNG/JPEG URL for the skin (used by skinTexture JSON and skinImage proxy).
+     * UUID must already be formatted (canonical dashed).
+     */
+    private function resolveRemoteSkinTextureUrl(string $uuid): ?string
+    {
+        $skinUrl = $this->skinTextureUrl($uuid);
+
+        $apiKey = env('MINESKIN_API_KEY');
+        if ($apiKey) {
+            $apiUrl = self::MINESKIN_API . '/get/uuid/' . $uuid;
+            $ctx = stream_context_create([
+                'http' => [
+                    'method' => 'GET',
+                    'header' => implode("\r\n", [
+                        'User-Agent: Pterodactyl-PlayerManager/1.0',
+                        'Authorization: Bearer ' . $apiKey,
+                    ]),
+                    'timeout' => 3,
+                    'ignore_errors' => true,
+                ],
+            ]);
+            $raw = @file_get_contents($apiUrl, false, $ctx);
+            if ($raw !== false) {
+                $data = json_decode($raw, true);
+                if (isset($data['data']['texture']['url'])) {
+                    $skinUrl = $data['data']['texture']['url'];
+                }
+            }
+        }
+
+        if ($skinUrl === null || trim((string) $skinUrl) === '') {
+            $fallbackTemplate = trim((string) config('minecraftplayermanager.skin_preview_fallback_url', ''));
+            if ($fallbackTemplate !== '') {
+                $skinUrl = $this->applyUuidTemplate($fallbackTemplate, $uuid);
+            }
+        }
+
+        $skinUrl = is_string($skinUrl) ? trim($skinUrl) : '';
+        if ($skinUrl === '') {
+            return null;
+        }
+
+        return $this->isSafeHttpUrlForSkinProxy($skinUrl) ? $skinUrl : null;
+    }
+
+    private function isSafeHttpUrlForSkinProxy(string $url): bool
+    {
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        $parts = parse_url($url);
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            return false;
+        }
+
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if ($host === '' || $host === 'localhost' || str_ends_with($host, '.local')) {
+            return false;
+        }
+
+        if ($host === '169.254.169.254' || str_starts_with($host, '127.')) {
+            return false;
+        }
+
+        return true;
+    }
+
     public function skin(PlayerManagerGetRequest $request)
     {
         $content = file_get_contents(resource_path('views/extensions/minecraftplayermanager/skin.html'));
@@ -816,36 +911,72 @@ class PlayerManagerController extends ClientApiController
         }
 
         $uuid = $this->utils->formatUuid($uuid);
-        $skinUrl = $this->skinTextureUrl($uuid);
-        $capeUrl = null;
-
-        $apiKey = env('MINESKIN_API_KEY');
-        if ($apiKey) {
-            $apiUrl = self::MINESKIN_API . '/get/uuid/' . $uuid;
-            $headers = [
-                'User-Agent: Pterodactyl-PlayerManager/1.0',
-                'Authorization: Bearer ' . $apiKey,
-            ];
-            $ctx = stream_context_create([
-                'http' => [
-                    'method' => 'GET',
-                    'header' => implode("\r\n", $headers),
-                    'timeout' => 3,
-                    'ignore_errors' => true,
-                ],
+        $remote = $this->resolveRemoteSkinTextureUrl($uuid);
+        if ($remote === null) {
+            return new JsonResponse([
+                'skinUrl' => null,
+                'capeUrl' => null,
             ]);
-            $raw = @file_get_contents($apiUrl, false, $ctx);
-            if ($raw !== false) {
-                $data = json_decode($raw, true);
-                if (isset($data['data']['texture']['url'])) {
-                    $skinUrl = $data['data']['texture']['url'];
-                }
+        }
+
+        $proxyPath = '/api/client/extensions/minecraftplayermanager/servers/' . $server->uuid
+            . '/skinImage?' . http_build_query(['uuid' => $uuid]);
+
+        return new JsonResponse([
+            'skinUrl' => $proxyPath,
+            'capeUrl' => null,
+        ]);
+    }
+
+    /**
+     * Same-origin skin PNG for the 3D viewer (avoids browser CORS on external skin hosts).
+     */
+    public function skinImage(PlayerManagerGetRequest $request, Server $server): Response
+    {
+        $uuid = $request->query('uuid');
+        if (!$uuid || strlen($uuid) < 32) {
+            return new Response('Bad Request', 400);
+        }
+
+        $uuid = $this->utils->formatUuid($uuid);
+        $remote = $this->resolveRemoteSkinTextureUrl($uuid);
+        if ($remote === null) {
+            return new Response('Not Found', 404);
+        }
+
+        try {
+            $response = Http::timeout(15)
+                ->withHeaders([
+                    'User-Agent' => 'Pterodactyl-PlayerManager/1.0',
+                    'Accept' => 'image/png,image/jpeg,image/*,*/*;q=0.8',
+                ])
+                ->get($remote);
+        } catch (\Throwable) {
+            return new Response('Bad Gateway', 502);
+        }
+
+        if (!$response->successful()) {
+            return new Response('Bad Gateway', 502);
+        }
+
+        $body = $response->body();
+        if (strlen($body) < 64) {
+            return new Response('Bad Gateway', 502);
+        }
+
+        $contentType = 'image/png';
+        if (str_starts_with($body, "\xff\xd8\xff")) {
+            $contentType = 'image/jpeg';
+        } elseif (!str_starts_with($body, "\x89PNG\r\n\x1a\n")) {
+            $contentType = $response->header('Content-Type') ?? 'application/octet-stream';
+            if (!is_string($contentType) || !str_starts_with(strtolower($contentType), 'image/')) {
+                $contentType = 'application/octet-stream';
             }
         }
 
-        return new JsonResponse([
-            'skinUrl' => $skinUrl,
-            'capeUrl' => $capeUrl,
+        return new Response($body, 200, [
+            'Content-Type' => $contentType,
+            'Cache-Control' => 'public, max-age=300',
         ]);
     }
 
@@ -935,7 +1066,7 @@ class PlayerManagerController extends ClientApiController
 
         $isOp = false;
         foreach ($data as $op) {
-            if ($op['uuid'] === $uuid) {
+            if ($this->utils->sameMinecraftUuid($op['uuid'] ?? null, $uuid)) {
                 $isOp = true;
                 break;
             }
@@ -957,8 +1088,9 @@ class PlayerManagerController extends ClientApiController
             ], 400);
         }
 
-        $data = array_filter($data, function ($op) use ($player) {
-            return $op['uuid'] !== $player['uuid'];
+        $utils = $this->utils;
+        $data = array_filter($data, function ($op) use ($player, $utils) {
+            return !$utils->sameMinecraftUuid($op['uuid'] ?? null, $player['uuid']);
         });
 
         $this->utils->saveConfig($server, 'ops.json', $data);
@@ -1120,7 +1252,7 @@ class PlayerManagerController extends ClientApiController
 
         $isWhitelisted = false;
         foreach ($data as $whitelist) {
-            if ($whitelist['uuid'] === $uuid) {
+            if ($this->utils->sameMinecraftUuid($whitelist['uuid'] ?? null, $uuid)) {
                 $isWhitelisted = true;
                 break;
             }
@@ -1142,8 +1274,9 @@ class PlayerManagerController extends ClientApiController
             ], 400);
         }
 
-        $data = array_filter($data, function ($whitelist) use ($player) {
-            return $whitelist['uuid'] !== $player['uuid'];
+        $utils = $this->utils;
+        $data = array_filter($data, function ($whitelist) use ($player, $utils) {
+            return !$utils->sameMinecraftUuid($whitelist['uuid'] ?? null, $player['uuid']);
         });
 
         $this->utils->saveConfig($server, 'whitelist.json', $data);
@@ -1259,7 +1392,7 @@ class PlayerManagerController extends ClientApiController
 
         $isBanned = false;
         foreach ($data as $ban) {
-            if ($ban['uuid'] === $uuid) {
+            if ($this->utils->sameMinecraftUuid($ban['uuid'] ?? null, $uuid)) {
                 $isBanned = true;
                 break;
             }
@@ -1281,8 +1414,9 @@ class PlayerManagerController extends ClientApiController
             ], 400);
         }
 
-        $data = array_filter($data, function ($ban) use ($player) {
-            return $ban['uuid'] !== $player['uuid'];
+        $utils = $this->utils;
+        $data = array_filter($data, function ($ban) use ($player, $utils) {
+            return !$utils->sameMinecraftUuid($ban['uuid'] ?? null, $player['uuid']);
         });
 
         $this->utils->saveConfig($server, 'banned-players.json', $data);
@@ -1376,7 +1510,7 @@ class PlayerManagerController extends ClientApiController
             ], 400);
         }
 
-        $uuid = $request->input('uuid');
+        $uuid = $this->utils->formatUuid($request->input('uuid'));
         $reason = $request->input('reason');
 
         try {
@@ -1384,7 +1518,7 @@ class PlayerManagerController extends ClientApiController
 
             $name = null;
             foreach ($data['players']['list'] ?? [] as $player) {
-                if ($player['id'] === $uuid) {
+                if ($this->utils->sameMinecraftUuid($player['id'] ?? null, $uuid)) {
                     $name = $player['name'];
                     break;
                 }
@@ -1498,7 +1632,7 @@ class PlayerManagerController extends ClientApiController
 
             $name = null;
             foreach ($query['players']['list'] ?? [] as $player) {
-                if ($player['id'] === $uuid) {
+                if ($this->utils->sameMinecraftUuid($player['id'] ?? null, $uuid)) {
                     $name = $player['name'];
                     break;
                 }
@@ -1551,7 +1685,7 @@ class PlayerManagerController extends ClientApiController
 
             $name = null;
             foreach ($query['players']['list'] ?? [] as $player) {
-                if ($player['id'] === $uuid) {
+                if ($this->utils->sameMinecraftUuid($player['id'] ?? null, $uuid)) {
                     $name = $player['name'];
                     break;
                 }
@@ -1604,7 +1738,7 @@ class PlayerManagerController extends ClientApiController
 
             $name = null;
             foreach ($query['players']['list'] ?? [] as $player) {
-                if ($player['id'] === $uuid) {
+                if ($this->utils->sameMinecraftUuid($player['id'] ?? null, $uuid)) {
                     $name = $player['name'];
                     break;
                 }
@@ -1683,7 +1817,7 @@ class PlayerManagerController extends ClientApiController
 
             $name = null;
             foreach ($query['players']['list'] ?? [] as $player) {
-                if ($player['id'] === $uuid) {
+                if ($this->utils->sameMinecraftUuid($player['id'] ?? null, $uuid)) {
                     $name = $player['name'];
                     break;
                 }
@@ -1737,7 +1871,7 @@ class PlayerManagerController extends ClientApiController
 
             $name = null;
             foreach ($query['players']['list'] ?? [] as $player) {
-                if ($player['id'] === $uuid) {
+                if ($this->utils->sameMinecraftUuid($player['id'] ?? null, $uuid)) {
                     $name = $player['name'];
                     break;
                 }
@@ -1776,16 +1910,16 @@ class PlayerManagerController extends ClientApiController
 
     private function getOnlinePlayerName(Server $server, string $uuid): ?string
     {
-        $needle = str_replace('-', '', $this->utils->formatUuid($uuid));
         try {
             $data = $this->queryApi($server);
             foreach ($data['players']['list'] ?? [] as $p) {
-                if (str_replace('-', '', (string) ($p['id'] ?? '')) === $needle) {
+                if ($this->utils->sameMinecraftUuid($p['id'] ?? null, $uuid)) {
                     return $p['name'] ?? null;
                 }
             }
         } catch (\Throwable $e) {
         }
+
         return null;
     }
 
